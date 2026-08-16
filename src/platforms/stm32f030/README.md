@@ -16,7 +16,7 @@
 默认应用参数见 `App/motor_app.c`，由台架实测得出：
 
 ```
-phase 3, kick duty 20%, run duty 20%, direction 0（本接线下为逆时针）
+phase 3, kick duty 20%, run duty 20%, direction 0（顺时针；1 为逆时针）
 ```
 
 ## 控制环时基
@@ -39,7 +39,14 @@ update，因此 `motor_pwm.c` 里 `RepetitionCounter = 1`，才能得到
 | `MOTOR_PHASE_LOW` | 清 `CCxE`、置 `CCxNE` | **`ARR + 1`** |
 
 `MOTOR_PHASE_LOW` 用 `ARR+1` 而不是 0：`CCxE=0, CCxNE=1` 时 OCxN 引脚直接跟随
-OCxREF（不反相、不插死区），`CCR=0` 会让低边恒关、回流臂断开。其余陷阱见
+OCxREF（不反相、不插死区），`CCR=0` 会让低边恒关、回流臂断开。
+
+## 换向
+
+`hall6_lookup(hall, reverse)` 与 `ol_lookup_step(hall, ccw)` 在反向时把 **PWM 相与
+LOW 相互换**——同一转子位置下绕组电流反向，力矩反向而幅值不变，所以正反转效率对称。
+仅靠 `direction` 位切换 hall 序列是不够的：`s_seq_ccw` 是 `s_seq_cw` 的反序，等价于
+偏移 `−p`，而 `−p ≡ p (mod 6)` 恰好落在 phase 0 和 3 这两个唯一高效的偏移上。其余陷阱见
 [`src/firmware/stm32f030/README.md`](../../firmware/stm32f030/README.md#已知陷阱)。
 
 板级管脚见 `src/firmware/stm32f030/board_pins.h`。

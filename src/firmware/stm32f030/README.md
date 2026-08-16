@@ -22,9 +22,11 @@ src/platforms/stm32f030/  # hall6 / 开环算法 + PWM / Hall / TIM1 控制环
 台架实测得出，**不等于 TARS 的数字**（死区口径不同，见「已知陷阱」）：
 
 ```
-hall6 闭环：phase 3, kick duty 20%, run duty 20%, direction 0（本接线下为逆时针）
+hall6 闭环：phase 3, kick duty 20%, run duty 20%, direction 0（顺时针；1 为逆时针）
 TIM1：      20 kHz 中心对齐, DTG=72（1.5 us 死区）, 控制环 20 kHz
 ```
+
+正反转效率对称，实测两个方向都是约 60 mA / 24 电周期/s。
 
 实测：绕组约 1.6 A，转起来后反电动势把母线压到约 70 mA、约 24 电周期/s。
 
@@ -99,6 +101,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 2. **中心对齐必须 `RCR=1`。** 上溢和下溢各产生一次 update 事件，`RCR=0` 时控制环会跑在 `2 × MOTOR_PWM_HZ`，所有基于 `MOTOR_CTRL_ISR_HZ` 的时间常数（Hall 消抖、堵转超时、kick 间隔）都会差一倍。
 3. **DTG 是非线性编码，且死区要从 HS 脉冲里减掉。** `DTG[7:5]=0xx` 才是线性；`DTG=144` 实际是 3.33 us 而非 3 us。有效导通时间 = `2×CCR − DT`，所以「duty 百分比相同」不代表驱动量相同——跨 MCU 移植要对齐**有效导通时间**，不是 duty 数字。
 4. **`MotorOpenloop_SetStepMs()` 把非零值限幅到 5..500 ms**，传 60000 会被压成 500 ms。需要真正不换相时传 **0**。
+5. **换向必须换驱动表，不能只移相。** `s_seq_ccw` 是 `s_seq_cw` 关于索引 0 的反序，所以「按 ccw 表映射」等价于「偏移 −p」；而 6 元循环里 `−p ≡ p` 恰好发生在 **p=0 和 p=3**——而这两个又是唯一高效的偏移（约 60 mA；±60° 的 p=1/2/4/5 要 0.25 A）。结果就是只靠 `direction` 位在 p=0/3 上完全无效。真正的换向是把 **PWM 相与 LOW 相互换**（`hall6_lookup()` 的 `reverse` 分支、`ol_lookup_step()` 的 ccw 分支），力矩反向而幅值不变。
 5. **半桥板 VOUT 对地的滤波电容必须拆掉。** 那块板按 buck 输出级设计，VOUT 上的电容会被高边充、低边放，形成一条约 96 mΩ 的通路吃掉约 1.5 A（∝ 导通时间、与死区无关、与电机是否接入无关），电机只能吃残羹。拆掉后母线电流降约 80~100 倍，并从「线性 ∝ 导通时间」变为「平方 ∝ duty²」的正常电机特性。
 6. **`MotorApp_Start()` 等 SWD 调用不可靠**（gdb `call` 返回正常但外设状态常对不上），台架验证请用 `MOTOR_AUTO_START` 烧录后 reset 的路径。另外 OpenOCD `program ... reset` 会在 `Reset_Handler` 留断点，测量前必须 `rbp all` + `resume`，否则 CPU 根本没跑到 `main`。
 
