@@ -71,14 +71,37 @@ static void hall6_store(const motor_hall6_snapshot_t *src)
   }
 }
 
-static const hall6_step_t *hall6_lookup(uint8_t hall)
+/*
+ * Reversing via the hall sequence alone cannot work at phase offsets 0 and 3:
+ * s_seq_ccw is s_seq_cw reversed about index 0, so mapping through it is
+ * equivalent to offset -p, and -p == p (mod 6) exactly at those two offsets -
+ * which are the only efficient ones. Reverse torque instead by swapping which
+ * phase sources and which sinks, same as ol_lookup_step().
+ */
+static const hall6_step_t *hall6_lookup(uint8_t hall, uint8_t reverse)
 {
+  static hall6_step_t rev;
+  const hall6_step_t *st;
+
   if (hall >= 8U)
   {
     return &s_table_cw[0];
   }
 
-  return &s_table_cw[hall];
+  st = &s_table_cw[hall];
+  if (reverse == 0U)
+  {
+    return st;
+  }
+
+  rev = *st;
+  if (rev.u == MOTOR_PHASE_PWM) { rev.u = MOTOR_PHASE_LOW; }
+  else if (rev.u == MOTOR_PHASE_LOW) { rev.u = MOTOR_PHASE_PWM; }
+  if (rev.v == MOTOR_PHASE_PWM) { rev.v = MOTOR_PHASE_LOW; }
+  else if (rev.v == MOTOR_PHASE_LOW) { rev.v = MOTOR_PHASE_PWM; }
+  if (rev.w == MOTOR_PHASE_PWM) { rev.w = MOTOR_PHASE_LOW; }
+  else if (rev.w == MOTOR_PHASE_LOW) { rev.w = MOTOR_PHASE_PWM; }
+  return &rev;
 }
 
 static const uint8_t *hall6_seq(uint8_t ccw)
@@ -183,7 +206,7 @@ static void hall6_commutate(uint8_t table_hall)
     return;
   }
 
-  st = hall6_lookup(table_hall);
+  st = hall6_lookup(table_hall, s_snap.direction);
   {
     TIM_TypeDef *tim = htim1.Instance;
     uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
