@@ -8,7 +8,7 @@ typedef struct {
   uint8_t  step;
   uint8_t  duty_pct;
   uint8_t  enabled;
-  uint8_t  direction;    /* commutation sequence select; 0 spins CCW on this wiring */
+  uint8_t  direction;    /* 0 spins clockwise on this wiring, 1 counter-clockwise */
   uint8_t  fault;
   uint8_t  kick;
   uint8_t  phase;
