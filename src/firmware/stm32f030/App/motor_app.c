@@ -1,5 +1,7 @@
 #include "motor_app.h"
+#if defined(MOTOR_FOC_BENCH) && (MOTOR_FOC_BENCH != 0)
 #include "foc_bench.h"
+#endif
 #include "hall6.h"
 #include "openloop.h"
 #include "motor_pwm.h"
@@ -85,6 +87,18 @@ int MotorApp_StartOpenloop6(void)
                                     MOTOR_STEP_MS);
 }
 
+/*
+ * One fixed commutation step, no Hall dependence and no commutation: the safest
+ * way to put current through the bridges. Reachable from cmake
+ * (-DMOTOR_AUTO_START=ON -DMOTOR_START_DIAG=ON) so it runs from a reset rather
+ * than from a gdb call, which docs/roadmap.md section 9.5 rules out for
+ * measurements.
+ */
+int MotorApp_StartDiagStep(void)
+{
+  return MotorApp_DiagGPhase(MOTOR_DUTY_PCT);
+}
+
 __attribute__((used)) int MotorApp_DiagGPhase(uint8_t duty_pct)
 {
   if (duty_pct > 7U)
@@ -110,11 +124,13 @@ __attribute__((used)) void MotorApp_DiagStop(void)
   MotorApp_Stop();
 }
 
+#if defined(MOTOR_FOC_BENCH) && (MOTOR_FOC_BENCH != 0)
 __attribute__((used)) void MotorApp_RunFocBench(void)
 {
   MotorApp_Stop();
   MotorFocBench_Run();
 }
+#endif
 
 __attribute__((used)) void *const motor_swd_entry[] = {
   (void *)MotorApp_Start,
@@ -123,5 +139,7 @@ __attribute__((used)) void *const motor_swd_entry[] = {
   (void *)MotorApp_StartOpenloop6Cfg,
   (void *)MotorApp_DiagGPhase,
   (void *)MotorApp_DiagStop,
+#if defined(MOTOR_FOC_BENCH) && (MOTOR_FOC_BENCH != 0)
   (void *)MotorApp_RunFocBench,
+#endif
 };

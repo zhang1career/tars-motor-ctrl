@@ -5,8 +5,6 @@
 #include "main.h"
 #include "stm32f0xx_hal.h"
 
-TIM_HandleTypeDef htim3;
-
 static void motor_tick_dispatch(void)
 {
   if (MotorHall6_IsEnabled() != 0)
@@ -21,7 +19,7 @@ static void motor_tick_dispatch(void)
 
 void MotorTick_Init(void)
 {
-  /* TIM3 unused; control loop runs from TIM1 update (TARS-aligned). */
+  /* No timer of its own: the control loop runs from TIM1 update (TARS-aligned). */
 }
 
 void MotorTick_Start(void)
@@ -43,13 +41,5 @@ void MotorTick_OnTim1Update(void)
       __HAL_TIM_CLEAR_IT(&htim1, TIM_IT_UPDATE);
       motor_tick_dispatch();
     }
-  }
-}
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-  if (htim->Instance == TIM3)
-  {
-    motor_tick_dispatch();
   }
 }

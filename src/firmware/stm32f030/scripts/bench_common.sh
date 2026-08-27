@@ -14,7 +14,63 @@ DESIGN="${DESIGN_DIR:-/Users/mini/Projects/hw-lab/half-bridge/pcb}"
 TIM1_BDTR=0x40012C44
 TIM1_CCER=0x40012C20
 
+ELF="${ELF:-$BUILD/motor-ctrl.elf}"
+
+# cmake is not on the default PATH on this host; the CMake.app copy is.
+if ! command -v cmake >/dev/null 2>&1 && [[ -x /Applications/CMake.app/Contents/bin/cmake ]]; then
+  PATH="/Applications/CMake.app/Contents/bin:$PATH"
+fi
+
+NM="${NM:-}"
+if [[ -z "$NM" ]]; then
+  for _nm in /Applications/ArmGNUToolchain/*/arm-none-eabi/bin/arm-none-eabi-nm; do
+    [[ -x "$_nm" ]] && NM="$_nm"
+  done
+  NM="${NM:-arm-none-eabi-nm}"
+fi
+
 ocd() { openocd -f "$CFG" "$@" 2>&1 | rg -v 'gdb to socket|Address already in use' || true; }
+
+# Resolve a static's address from the ELF instead of hardcoding it. Layout moves
+# whenever the code changes: docs once recorded openloop s_snap at 0x200000fc
+# while the linker had since put it at 0x200000b4, and pole_pairs.sh was reading
+# an address that belonged to neither.
+sym_addr() {
+  local name="$1" addr
+  addr=$("$NM" "$ELF" | rg "^([0-9a-f]{8}) [bBdD] ${name}\$" -r '$1' | head -1)
+  if [[ -z "$addr" ]]; then
+    echo "sym_addr: '$name' not found in $ELF" >&2
+    return 1
+  fi
+  printf '0x%s' "$addr"
+}
+
+# Read n words at addr without halting. Cortex-M memory access goes through the
+# DAP, so this works with the motor running -- halting would freeze commutation
+# mid-step while TIM1 keeps switching.
+read_words() {
+  local addr="$1" n="${2:-1}"
+  ocd -c 'init' -c "mdw $addr $n" -c 'exit' \
+    | rg '^0x[0-9a-f]+:' \
+    | sed 's/^[^:]*: *//' \
+    | tr ' ' '\n' \
+    | rg '^[0-9a-f]{8}$'
+}
+
+# HAL's uwTick advances every 1 ms; two reads that differ prove main() is
+# running. Non-invasive, unlike halting to inspect PC.
+cpu_alive() {
+  local addr t1 t2
+  addr=$(sym_addr uwTick) || return 1
+  t1=$(read_words "$addr" 1)
+  sleep 0.3
+  t2=$(read_words "$addr" 1)
+  if [[ -z "$t1" || -z "$t2" || "$t1" == "$t2" ]]; then
+    echo "cpu_alive: uwTick stuck at 0x$t1 - CPU not running main()" >&2
+    return 1
+  fi
+  return 0
+}
 
 # The MCU is powered through the debug probe, so a missing probe looks exactly
 # like a dead board: no PWM and no bus current. Fail loudly instead of measuring

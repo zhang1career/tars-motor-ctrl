@@ -2,8 +2,17 @@
 #define MOTOR_CYCLES_H
 
 #include <stdint.h>
+#include "stm32f0xx_hal.h"
 
-/* TIM3 prescaler 0 -> 48 MHz on STM32F030 @ 48 MHz SYSCLK. */
+/*
+ * Cortex-M0 has no DWT cycle counter, so a free-running 16-bit timer stands in.
+ * TIM16 rather than TIM3: TIM3_CH1/CH2 are the only capture channels reachable
+ * from HALL_B (PB4) and HALL_C (PB5) on LQFP-32, so TIM3 is kept free for rotor
+ * angle work (mainboard-spec.md section 3.1).
+ */
+#define MOTOR_CYCLES_TIM TIM16
+
+/* Prescaler 0 -> 48 MHz on STM32F030 @ 48 MHz SYSCLK. */
 #define MOTOR_CYCLES_HZ 48000000U
 
 void MotorCycles_Init(void);

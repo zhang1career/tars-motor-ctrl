@@ -7,7 +7,6 @@ source "$ROOT/scripts/bench_common.sh"
 
 WINDOW_S="${WINDOW_S:-10}"
 RUN_DUTY="${RUN_DUTY:-8}"
-HALL_CHANGES_ADDR=0x20000120
 
 require_dap
 
@@ -18,9 +17,16 @@ cmake -S "$BENCH_ROOT" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release \
 cmake --build "$BUILD"
 flash_elf
 
+# hall_changes sits 12 bytes into motor_hall6_snapshot_t (8 uint8 then
+# loop_count). Resolve the snapshot from the ELF: this was a hardcoded
+# 0x20000120, which no longer pointed at any snapshot field after the layout
+# moved.
+SNAP_ADDR=$(sym_addr s_hall6_snap)
+HALL_CHANGES_ADDR=$(python3 -c "print(hex($SNAP_ADDR + 12))")
+echo "hall6 snapshot at $SNAP_ADDR, hall_changes at $HALL_CHANGES_ADDR"
+
 read_hall_changes() {
-  openocd -f "$CFG" -c 'init' -c "mdw $HALL_CHANGES_ADDR 1" -c 'exit' 2>/dev/null \
-    | awk '/^0x/ { print strtonum($2) }'
+  read_words "$HALL_CHANGES_ADDR" 1 | python3 -c "import sys; print(int(sys.stdin.read().strip(), 16))"
 }
 
 echo "waiting 3 s for motor to stabilize (duty ${RUN_DUTY}%)..."

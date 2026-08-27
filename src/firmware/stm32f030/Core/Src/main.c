@@ -18,7 +18,9 @@ int main(void)
   (void)motor_swd_entry[0];
 
 #if defined(MOTOR_AUTO_START) && (MOTOR_AUTO_START != 0)
-#if defined(MOTOR_START_HALL6) && (MOTOR_START_HALL6 != 0)
+#if defined(MOTOR_START_DIAG) && (MOTOR_START_DIAG != 0)
+  (void)MotorApp_StartDiagStep();
+#elif defined(MOTOR_START_HALL6) && (MOTOR_START_HALL6 != 0)
   (void)MotorApp_Start();
 #else
   (void)MotorApp_StartOpenloop6();

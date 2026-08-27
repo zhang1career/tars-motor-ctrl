@@ -17,8 +17,3 @@ void TIM1_BRK_UP_TRG_COM_IRQHandler(void)
   MotorTick_OnTim1Update();
   HAL_TIM_IRQHandler(&htim1);
 }
-
-void TIM3_IRQHandler(void)
-{
-  HAL_TIM_IRQHandler(&htim3);
-}

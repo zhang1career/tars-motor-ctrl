@@ -33,7 +33,7 @@ static const hall6_step_t s_table_cw[8] = {
 static const uint8_t s_seq_cw[6] = { 5U, 1U, 3U, 2U, 6U, 4U };
 static const uint8_t s_seq_ccw[6] = { 5U, 4U, 6U, 2U, 3U, 1U };
 
-static motor_hall6_snapshot_t s_snap;
+static motor_hall6_snapshot_t s_hall6_snap;
 static volatile uint8_t s_enable;
 static uint8_t s_initialized;
 static uint8_t s_last_gpio_hall;
@@ -64,7 +64,7 @@ static void hall6_store(const motor_hall6_snapshot_t *src)
 {
   uint32_t primask = __get_PRIMASK();
   __disable_irq();
-  s_snap = *src;
+  s_hall6_snap = *src;
   if (primask == 0U)
   {
     __enable_irq();
@@ -133,13 +133,13 @@ static uint8_t hall6_map_hall(uint8_t raw)
     return raw;
   }
 
-  seq = hall6_seq(s_snap.direction);
+  seq = hall6_seq(s_hall6_snap.direction);
   return seq[(hall6_seq_index(seq, raw) + s_phase_offset) % 6U];
 }
 
 static void hall6_kick_begin(uint8_t hall)
 {
-  const uint8_t *seq = hall6_seq(s_snap.direction);
+  const uint8_t *seq = hall6_seq(s_hall6_snap.direction);
 
   s_kick_active = 1U;
   s_kick_seq_idx = hall6_seq_index(seq, hall);
@@ -151,14 +151,14 @@ static void hall6_kick_begin(uint8_t hall)
 
 static void hall6_kick_step(void)
 {
-  const uint8_t *seq = hall6_seq(s_snap.direction);
+  const uint8_t *seq = hall6_seq(s_hall6_snap.direction);
   motor_hall6_snapshot_t snap;
 
   s_kick_seq_idx = (uint8_t)((s_kick_seq_idx + 1U) % 6U);
   s_kick_steps++;
   hall6_commutate(hall6_map_hall(seq[s_kick_seq_idx]));
 
-  snap = s_snap;
+  snap = s_hall6_snap;
   snap.kick = 1U;
   hall6_store(&snap);
 
@@ -167,7 +167,7 @@ static void hall6_kick_step(void)
   {
     s_kick_active = 0U;
     snap.kick = 0U;
-    s_snap.duty_pct = s_run_duty_pct;
+    s_hall6_snap.duty_pct = s_run_duty_pct;
     snap.duty_pct = s_run_duty_pct;
     hall6_store(&snap);
     if (s_moe_pending != 0U)
@@ -200,17 +200,17 @@ static void hall6_commutate(uint8_t table_hall)
 
   if ((table_hall == 0U) || (table_hall == 7U))
   {
-    snap = s_snap;
+    snap = s_hall6_snap;
     snap.fault = 1U;
     hall6_store(&snap);
     return;
   }
 
-  st = hall6_lookup(table_hall, s_snap.direction);
+  st = hall6_lookup(table_hall, s_hall6_snap.direction);
   {
     TIM_TypeDef *tim = htim1.Instance;
     uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
-    uint32_t pulse = (arr * (uint32_t)s_snap.duty_pct) / 100U;
+    uint32_t pulse = (arr * (uint32_t)s_hall6_snap.duty_pct) / 100U;
 
     if (pulse > arr)
     {
@@ -282,8 +282,8 @@ static void hall6_commutate(uint8_t table_hall)
     }
   }
 
-  seq = hall6_seq(s_snap.direction);
-  snap = s_snap;
+  seq = hall6_seq(s_hall6_snap.direction);
+  snap = s_hall6_snap;
   snap.fault = 0U;
   snap.step = hall6_seq_index(seq, table_hall);
   hall6_store(&snap);
@@ -296,12 +296,12 @@ void MotorHall6_Init(void)
     return;
   }
 
-  s_snap.duty_pct = MOTOR_HALL6_DEFAULT_DUTY;
+  s_hall6_snap.duty_pct = MOTOR_HALL6_DEFAULT_DUTY;
   s_kick_duty_pct = MOTOR_HALL6_DEFAULT_DUTY;
   s_run_duty_pct = MOTOR_HALL6_DEFAULT_RUN;
   s_phase_offset = 3U;
-  s_snap.phase = 3U;
-  s_snap.direction = 0U;
+  s_hall6_snap.phase = 3U;
+  s_hall6_snap.direction = 0U;
   s_enable = 0U;
   s_initialized = 1U;
 }
@@ -320,7 +320,7 @@ void MotorHall6_SetDutyPct(uint8_t pct)
   s_run_duty_pct = pct;
   if (s_kick_active == 0U)
   {
-    s_snap.duty_pct = pct;
+    s_hall6_snap.duty_pct = pct;
   }
 }
 
@@ -333,19 +333,19 @@ void MotorHall6_SetKickDutyPct(uint8_t pct)
   s_kick_duty_pct = pct;
   if (s_kick_active != 0U)
   {
-    s_snap.duty_pct = pct;
+    s_hall6_snap.duty_pct = pct;
   }
 }
 
 void MotorHall6_SetPhaseOffset(uint8_t offset)
 {
   s_phase_offset = (uint8_t)(offset % 6U);
-  s_snap.phase = s_phase_offset;
+  s_hall6_snap.phase = s_phase_offset;
 }
 
 void MotorHall6_SetDirection(int ccw)
 {
-  s_snap.direction = (ccw != 0) ? 1U : 0U;
+  s_hall6_snap.direction = (ccw != 0) ? 1U : 0U;
 }
 
 void MotorHall6_GetSnapshot(motor_hall6_snapshot_t *out)
@@ -359,7 +359,7 @@ void MotorHall6_GetSnapshot(motor_hall6_snapshot_t *out)
 
   primask = __get_PRIMASK();
   __disable_irq();
-  *out = s_snap;
+  *out = s_hall6_snap;
   if (primask == 0U)
   {
     __enable_irq();
@@ -385,13 +385,13 @@ int MotorHall6_Enable(int enable)
 
     s_enable = 1U;
     s_last_gpio_hall = 0xFFU;
-    snap = s_snap;
+    snap = s_hall6_snap;
     snap.enabled = 1U;
     snap.fault = 0U;
     snap.loop_count = 0U;
     snap.hall_changes = 0U;
     snap.kick = 1U;
-    s_snap.duty_pct = s_kick_duty_pct;
+    s_hall6_snap.duty_pct = s_kick_duty_pct;
     snap.duty_pct = s_kick_duty_pct;
     hall6_store(&snap);
 
@@ -414,7 +414,7 @@ int MotorHall6_Enable(int enable)
   }
 
   hall6_disable_outputs();
-  snap = s_snap;
+  snap = s_hall6_snap;
   snap.enabled = 0U;
   snap.kick = 0U;
   hall6_store(&snap);
@@ -436,7 +436,7 @@ void MotorHall6_ControlLoopISR(void)
 
   if (hall != s_last_gpio_hall)
   {
-    motor_hall6_snapshot_t edge = s_snap;
+    motor_hall6_snapshot_t edge = s_hall6_snap;
     edge.hall_changes++;
     hall6_store(&edge);
 
@@ -472,7 +472,7 @@ void MotorHall6_ControlLoopISR(void)
     hall6_commutate(hall6_map_hall(hall));
   }
 
-  snap = s_snap;
+  snap = s_hall6_snap;
   snap.hall_raw = hall;
   snap.kick = s_kick_active;
   snap.phase = s_phase_offset;

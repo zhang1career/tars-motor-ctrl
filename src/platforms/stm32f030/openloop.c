@@ -30,7 +30,7 @@ static const ol_step_t s_table_cw[8] = {
 static const uint8_t s_seq_cw[6] = { 5U, 1U, 3U, 2U, 6U, 4U };
 static const uint8_t s_seq_ccw[6] = { 5U, 4U, 6U, 2U, 3U, 1U };
 
-static motor_openloop_snapshot_t s_snap;
+static motor_openloop_snapshot_t s_ol_snap;
 static volatile uint8_t s_enable;
 static uint8_t s_initialized;
 static uint8_t s_hall_sync;
@@ -71,7 +71,7 @@ static void ol_store(const motor_openloop_snapshot_t *src)
 {
   uint32_t primask = __get_PRIMASK();
   __disable_irq();
-  s_snap = *src;
+  s_ol_snap = *src;
   if (primask == 0U)
   {
     __enable_irq();
@@ -202,7 +202,7 @@ static uint8_t ol_map_hall(uint8_t raw)
     return raw;
   }
 
-  seq = ol_seq6(s_snap.direction);
+  seq = ol_seq6(s_ol_snap.direction);
   return seq[(ol_seq_index(seq, raw) + s_hall_phase) % 6U];
 }
 
@@ -213,7 +213,7 @@ static uint8_t ol_lookup_commute(void)
 
 static const uint8_t *ol_kick_seq(void)
 {
-  if (s_snap.direction != 0U)
+  if (s_ol_snap.direction != 0U)
   {
     return s_kick_invert ? s_seq_ccw : s_seq_cw;
   }
@@ -251,7 +251,7 @@ static int ol_hall_edge_ok(int8_t spin)
   }
 
   s_hall_spin = spin;
-  if (s_snap.direction != 0U)
+  if (s_ol_snap.direction != 0U)
   {
     return (spin > 0) ? 1 : 0;
   }
@@ -276,7 +276,7 @@ static void ol_hall_wrong_edge(void)
 
 static void ol_hall_good_edge(void)
 {
-  s_hall_last_edge_loop = s_snap.loop_count;
+  s_hall_last_edge_loop = s_ol_snap.loop_count;
 
   if (s_hall_good_edges < 255U)
   {
@@ -291,7 +291,7 @@ static void ol_hall_good_edge(void)
 static void ol_hall_stall_check(void)
 {
   if ((s_hall_locked != 0U) &&
-      ((s_snap.loop_count - s_hall_last_edge_loop) > OL_HALL_STALL_TICKS))
+      ((s_ol_snap.loop_count - s_hall_last_edge_loop) > OL_HALL_STALL_TICKS))
   {
     s_hall_locked = 0U;
     s_hall_good_edges = 0U;
@@ -309,7 +309,7 @@ static void ol_apply_hall_commute(uint8_t table_hall)
   }
 
   st = ol_lookup_step(table_hall, ol_lookup_commute());
-  ol_apply_uvw(st->u, st->v, st->w, s_snap.duty_pct);
+  ol_apply_uvw(st->u, st->v, st->w, s_ol_snap.duty_pct);
 }
 
 static void ol_apply_step6_kick(uint8_t step_idx, uint8_t duty_pct)
@@ -323,7 +323,7 @@ static void ol_apply_step6_kick(uint8_t step_idx, uint8_t duty_pct)
 
 static void ol_apply_step6(uint8_t step_idx, uint8_t duty_pct)
 {
-  const uint8_t *seq = ol_seq6(s_snap.direction);
+  const uint8_t *seq = ol_seq6(s_ol_snap.direction);
   uint8_t hall = seq[(step_idx + s_hall_phase) % 6U];
   const ol_step_t *st = ol_lookup_step(hall, 0U);
 
@@ -348,7 +348,7 @@ static void ol_apply_step3(uint8_t step, uint8_t duty_pct)
 
 static void ol_apply_step(uint8_t step, uint8_t duty_pct)
 {
-  if (s_snap.mode == MOTOR_OPENLOOP_MODE_6STEP)
+  if (s_ol_snap.mode == MOTOR_OPENLOOP_MODE_6STEP)
   {
     ol_apply_step6(step, duty_pct);
   }
@@ -360,7 +360,7 @@ static void ol_apply_step(uint8_t step, uint8_t duty_pct)
 
 static uint8_t ol_next_step(uint8_t step)
 {
-  if (s_snap.mode == MOTOR_OPENLOOP_MODE_6STEP)
+  if (s_ol_snap.mode == MOTOR_OPENLOOP_MODE_6STEP)
   {
     return (uint8_t)((step + 1U) % 6U);
   }
@@ -370,7 +370,7 @@ static uint8_t ol_next_step(uint8_t step)
     return (uint8_t)((step + 1U) % 6U);
   }
 
-  if (s_snap.direction != 0U)
+  if (s_ol_snap.direction != 0U)
   {
     return (uint8_t)((step + 1U) % 3U);
   }
@@ -384,21 +384,21 @@ static uint16_t ol_effective_step_ms(void)
 {
   uint32_t elapsed_ms;
 
-  if (s_snap.ramp_ms == 0U)
+  if (s_ol_snap.ramp_ms == 0U)
   {
-    return s_snap.step_ms;
+    return s_ol_snap.step_ms;
   }
 
-  elapsed_ms = s_snap.loop_count / (MOTOR_CTRL_ISR_HZ / 1000U);
-  if (elapsed_ms >= (uint32_t)s_snap.ramp_ms)
+  elapsed_ms = s_ol_snap.loop_count / (MOTOR_CTRL_ISR_HZ / 1000U);
+  if (elapsed_ms >= (uint32_t)s_ol_snap.ramp_ms)
   {
-    return s_snap.ramp_end_ms;
+    return s_ol_snap.ramp_end_ms;
   }
 
   {
-    uint32_t start = (uint32_t)s_snap.ramp_start_ms;
-    uint32_t end = (uint32_t)s_snap.ramp_end_ms;
-    uint32_t span = (uint32_t)s_snap.ramp_ms;
+    uint32_t start = (uint32_t)s_ol_snap.ramp_start_ms;
+    uint32_t end = (uint32_t)s_ol_snap.ramp_end_ms;
+    uint32_t span = (uint32_t)s_ol_snap.ramp_ms;
     int32_t delta = (int32_t)end - (int32_t)start;
     return (uint16_t)(start + ((delta * (int32_t)elapsed_ms) / (int32_t)span));
   }
@@ -425,14 +425,14 @@ void MotorOpenloop_Init(void)
     return;
   }
 
-  s_snap.duty_pct = 6U;
-  s_snap.step_ms = MOTOR_OPENLOOP_DEFAULT_MS;
-  s_snap.ramp_start_ms = 0U;
-  s_snap.ramp_end_ms = 0U;
-  s_snap.ramp_ms = 0U;
-  s_snap.direction = 0U;
-  s_snap.mode = MOTOR_OPENLOOP_MODE_3STEP;
-  s_snap.step = 0U;
+  s_ol_snap.duty_pct = 6U;
+  s_ol_snap.step_ms = MOTOR_OPENLOOP_DEFAULT_MS;
+  s_ol_snap.ramp_start_ms = 0U;
+  s_ol_snap.ramp_end_ms = 0U;
+  s_ol_snap.ramp_ms = 0U;
+  s_ol_snap.direction = 0U;
+  s_ol_snap.mode = MOTOR_OPENLOOP_MODE_3STEP;
+  s_ol_snap.step = 0U;
   s_uvw_perm = 0U;
   s_hall_sync = 0U;
   s_hall_stable = 0U;
@@ -461,7 +461,7 @@ void MotorOpenloop_SetDutyPct(uint8_t pct)
   {
     pct = MOTOR_OPENLOOP_MAX_DUTY;
   }
-  s_snap.duty_pct = pct;
+  s_ol_snap.duty_pct = pct;
 }
 
 void MotorOpenloop_SetStepMs(uint16_t ms)
@@ -473,7 +473,7 @@ void MotorOpenloop_SetStepMs(uint16_t ms)
     if (ms < 5U) { ms = 5U; }
     if (ms > 500U) { ms = 500U; }
   }
-  s_snap.step_ms = ms;
+  s_ol_snap.step_ms = ms;
 }
 
 void MotorOpenloop_SetRampMs(uint16_t start_ms, uint16_t end_ms, uint16_t ramp_ms)
@@ -482,20 +482,20 @@ void MotorOpenloop_SetRampMs(uint16_t start_ms, uint16_t end_ms, uint16_t ramp_m
   if (end_ms < 5U) { end_ms = 5U; }
   if (start_ms > 500U) { start_ms = 500U; }
   if (end_ms > 500U) { end_ms = 500U; }
-  s_snap.ramp_start_ms = start_ms;
-  s_snap.ramp_end_ms = end_ms;
-  s_snap.ramp_ms = ramp_ms;
-  s_snap.step_ms = end_ms;
+  s_ol_snap.ramp_start_ms = start_ms;
+  s_ol_snap.ramp_end_ms = end_ms;
+  s_ol_snap.ramp_ms = ramp_ms;
+  s_ol_snap.step_ms = end_ms;
 }
 
 void MotorOpenloop_SetDirection(int ccw)
 {
-  s_snap.direction = (ccw != 0) ? 1U : 0U;
+  s_ol_snap.direction = (ccw != 0) ? 1U : 0U;
 }
 
 void MotorOpenloop_SetMode(uint8_t mode)
 {
-  s_snap.mode = (mode == MOTOR_OPENLOOP_MODE_6STEP) ?
+  s_ol_snap.mode = (mode == MOTOR_OPENLOOP_MODE_6STEP) ?
                 MOTOR_OPENLOOP_MODE_6STEP : MOTOR_OPENLOOP_MODE_3STEP;
 }
 
@@ -543,7 +543,7 @@ void MotorOpenloop_GetSnapshot(motor_openloop_snapshot_t *out)
 
   primask = __get_PRIMASK();
   __disable_irq();
-  *out = s_snap;
+  *out = s_ol_snap;
   if (primask == 0U)
   {
     __enable_irq();
@@ -574,14 +574,14 @@ int MotorOpenloop_Enable(int enable)
     s_hall_locked = 0U;
     s_hall_last_edge_loop = 0U;
 
-    snap = s_snap;
+    snap = s_ol_snap;
     snap.enabled = 1U;
     snap.step = 0U;
     snap.step_count = 0U;
     snap.loop_count = 0U;
     ol_store(&snap);
 
-    ol_apply_step(0U, s_snap.duty_pct);
+    ol_apply_step(0U, s_ol_snap.duty_pct);
     if (s_hall_sync != 0U)
     {
       uint8_t hall = MotorHall_ReadRaw();
@@ -591,7 +591,7 @@ int MotorOpenloop_Enable(int enable)
         s_hall_stable = hall;
         s_hall_candidate = hall;
         s_hall_debounce = 0U;
-        snap.step = ol_seq_index(ol_seq6(s_snap.direction), hall);
+        snap.step = ol_seq_index(ol_seq6(s_ol_snap.direction), hall);
         ol_store(&snap);
         ol_apply_hall_commute(ol_map_hall(hall));
       }
@@ -605,7 +605,7 @@ int MotorOpenloop_Enable(int enable)
   MotorTick_Stop();
   MotorPwm_Stop();
 
-  snap = s_snap;
+  snap = s_ol_snap;
   snap.enabled = 0U;
   ol_store(&snap);
   return 1;
@@ -643,8 +643,8 @@ void MotorOpenloop_ControlLoopISR(void)
           {
             s_hall_wrong = 0U;
             ol_hall_good_edge();
-            snap = s_snap;
-            snap.step = ol_seq_index(ol_seq6(s_snap.direction), hall);
+            snap = s_ol_snap;
+            snap.step = ol_seq_index(ol_seq6(s_ol_snap.direction), hall);
             snap.step_count++;
             ol_store(&snap);
             ol_apply_hall_commute(ol_map_hall(hall));
@@ -677,16 +677,16 @@ void MotorOpenloop_ControlLoopISR(void)
         if (s_step_div >= ticks)
         {
           s_step_div = 0U;
-          snap = s_snap;
+          snap = s_ol_snap;
           snap.step = ol_next_step(snap.step);
           snap.step_count++;
           ol_store(&snap);
-          ol_apply_step6_kick(s_snap.step, s_snap.duty_pct);
+          ol_apply_step6_kick(s_ol_snap.step, s_ol_snap.duty_pct);
         }
       }
     }
 
-    snap = s_snap;
+    snap = s_ol_snap;
     snap.hall_raw = hall;
     snap.hall_spin = s_hall_spin;
     snap.hall_invert = s_hall_invert;
@@ -706,29 +706,29 @@ void MotorOpenloop_ControlLoopISR(void)
   if ((ticks != 0U) && (s_step_div >= ticks))
   {
     s_step_div = 0U;
-    snap = s_snap;
+    snap = s_ol_snap;
     snap.step = ol_next_step(snap.step);
     snap.step_count++;
     ol_store(&snap);
-    ol_apply_step(s_snap.step, s_snap.duty_pct);
+    ol_apply_step(s_ol_snap.step, s_ol_snap.duty_pct);
   }
 
-  snap = s_snap;
+  snap = s_ol_snap;
   snap.loop_count++;
   ol_store(&snap);
 
 #if defined(MOTOR_PHASE_SWEEP) && (MOTOR_PHASE_SWEEP != 0)
-  if ((s_snap.step_count > 0U) && ((s_snap.step_count % 50U) == 0U))
+  if ((s_ol_snap.step_count > 0U) && ((s_ol_snap.step_count % 50U) == 0U))
   {
     s_hall_phase = (uint8_t)((s_hall_phase + 1U) % 6U);
-    ol_apply_step(s_snap.step, s_snap.duty_pct);
+    ol_apply_step(s_ol_snap.step, s_ol_snap.duty_pct);
   }
 #endif
 #if defined(MOTOR_UVW_SWEEP) && (MOTOR_UVW_SWEEP != 0)
-  if ((s_snap.step_count > 0U) && ((s_snap.step_count % 100U) == 0U))
+  if ((s_ol_snap.step_count > 0U) && ((s_ol_snap.step_count % 100U) == 0U))
   {
     s_uvw_perm = (uint8_t)((s_uvw_perm + 1U) % 6U);
-    ol_apply_step(s_snap.step, s_snap.duty_pct);
+    ol_apply_step(s_ol_snap.step, s_ol_snap.duty_pct);
   }
 #endif
 }

@@ -4,8 +4,6 @@
 #include <stdint.h>
 #include "stm32f0xx_hal.h"
 
-extern TIM_HandleTypeDef htim3;
-
 #define MOTOR_CTRL_ISR_HZ  20000U
 
 void MotorTick_Init(void);

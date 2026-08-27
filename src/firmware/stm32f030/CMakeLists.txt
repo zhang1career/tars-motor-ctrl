@@ -44,6 +44,12 @@ option(MOTOR_PHASE_SWEEP "Rotate hall phase offset every ~2s during openloop" OF
 option(MOTOR_UVW_SWEEP "Rotate U/V/W pin remap every ~2s during openloop" OFF)
 option(MOTOR_HS_ONLY "Diagnostic: drive PWM leg high side only (no complementary low side)" OFF)
 option(MOTOR_START_HALL6 "Auto-start hall closed loop instead of open loop" OFF)
+option(MOTOR_START_DIAG "Auto-start one static commutation step (no rotation)" OFF)
+# The stage-B float FOC from sim/codegen_stm32 costs ~12 KB flash and ~0.5 KB RAM
+# (soft-float libm). Its verdict is already recorded -- 15~18k cycles, see
+# docs/mainboard-spec.md section 0 -- so keep it out of the runtime image and
+# only link it when re-running the timing bench.
+option(MOTOR_FOC_BENCH "Link sim/codegen_stm32 float FOC and its timing bench" OFF)
 set(MOTOR_HALL6_KICK_DUTY "" CACHE STRING "Hall6 kick duty percent (default 6)")
 set(MOTOR_HALL6_RUN_DUTY "" CACHE STRING "Hall6 run duty percent (default 7)")
 set(MOTOR_HALL6_PHASE "" CACHE STRING "Hall6 phase offset 0..5 (default 3)")
@@ -78,6 +84,9 @@ endif()
 if(MOTOR_START_HALL6)
   add_compile_definitions(MOTOR_START_HALL6=1)
 endif()
+if(MOTOR_START_DIAG)
+  add_compile_definitions(MOTOR_START_DIAG=1)
+endif()
 foreach(_motor_param MOTOR_DUTY_PCT MOTOR_TIM1_DTG MOTOR_PULSE_COUNTS MOTOR_STEP_MS
                      MOTOR_PHASE_OFFSET MOTOR_HALL6_KICK_DUTY MOTOR_HALL6_RUN_DUTY
                      MOTOR_HALL6_PHASE MOTOR_HALL6_CCW)
@@ -93,11 +102,20 @@ file(GLOB APP_SRC  ${CMAKE_SOURCE_DIR}/App/*.c)
 file(GLOB CORE_SRC ${CMAKE_SOURCE_DIR}/Core/Src/*.c)
 file(GLOB PLAT_SRC ${PLAT_DIR}/*.c)
 
-set(FOC_SRC
-  ${FOC_DIR}/foc_step_stm32.c
-  ${FOC_DIR}/foc_step_stm32_data.c
-  ${FOC_DIR}/foc_step_stm32_initialize.c
-)
+if(MOTOR_FOC_BENCH)
+  add_compile_definitions(MOTOR_FOC_BENCH=1)
+  set(FOC_SRC
+    ${FOC_DIR}/foc_step_stm32.c
+    ${FOC_DIR}/foc_step_stm32_data.c
+    ${FOC_DIR}/foc_step_stm32_initialize.c)
+  set(FOC_LINK_OPTS -Wl,--undefined=MotorFocBench_Run -lm)
+else()
+  list(REMOVE_ITEM APP_SRC
+    ${CMAKE_SOURCE_DIR}/App/foc_bench.c
+    ${CMAKE_SOURCE_DIR}/App/foc_stubs.c)
+  set(FOC_SRC "")
+  set(FOC_LINK_OPTS "")
+endif()
 
 set(HAL_SRC
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal.c
@@ -146,8 +164,7 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
   -Wl,--undefined=MotorApp_DiagGPhase
   -Wl,--undefined=MotorApp_DiagStop
   -Wl,--undefined=MotorHall6_Enable
-  -Wl,--undefined=MotorFocBench_Run
-  -lm
+  ${FOC_LINK_OPTS}
   -Wl,--print-memory-usage
   -Wl,-Map=${PROJECT_NAME}.map)
 

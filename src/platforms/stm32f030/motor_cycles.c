@@ -1,8 +1,8 @@
 #include "motor_cycles.h"
-#include "motor_tick.h"
 #include "board_pins.h"
 #include "stm32f0xx_hal.h"
 
+static TIM_HandleTypeDef s_htim_cyc;
 static uint8_t s_scope_gpio_ready;
 
 static void motor_cycles_scope_init(void)
@@ -26,31 +26,31 @@ static void motor_cycles_scope_init(void)
 
 void MotorCycles_Init(void)
 {
-  if (htim3.Instance == TIM3 && htim3.State == HAL_TIM_STATE_READY)
+  if (s_htim_cyc.Instance == MOTOR_CYCLES_TIM && s_htim_cyc.State == HAL_TIM_STATE_READY)
   {
-    __HAL_TIM_SET_COUNTER(&htim3, 0U);
-    (void)HAL_TIM_Base_Start(&htim3);
+    __HAL_TIM_SET_COUNTER(&s_htim_cyc, 0U);
+    (void)HAL_TIM_Base_Start(&s_htim_cyc);
     return;
   }
 
-  htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 0U;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 0xFFFFU;
-  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  s_htim_cyc.Instance = MOTOR_CYCLES_TIM;
+  s_htim_cyc.Init.Prescaler = 0U;
+  s_htim_cyc.Init.CounterMode = TIM_COUNTERMODE_UP;
+  s_htim_cyc.Init.Period = 0xFFFFU;
+  s_htim_cyc.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  s_htim_cyc.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&s_htim_cyc) != HAL_OK)
   {
     return;
   }
 
-  __HAL_TIM_SET_COUNTER(&htim3, 0U);
-  (void)HAL_TIM_Base_Start(&htim3);
+  __HAL_TIM_SET_COUNTER(&s_htim_cyc, 0U);
+  (void)HAL_TIM_Base_Start(&s_htim_cyc);
 }
 
 uint16_t MotorCycles_Read(void)
 {
-  return (uint16_t)__HAL_TIM_GET_COUNTER(&htim3);
+  return (uint16_t)__HAL_TIM_GET_COUNTER(&s_htim_cyc);
 }
 
 uint16_t MotorCycles_Delta(uint16_t start, uint16_t end)

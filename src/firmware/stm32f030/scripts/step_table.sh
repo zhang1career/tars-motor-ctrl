@@ -11,7 +11,11 @@ DTG="${DTG:-72}"
 CCR="${CCR:-44}"
 HS_ONLY="${HS_ONLY:-OFF}"
 HOLD_S="${HOLD_S:-4}"
-STATIC_STEP_MS=60000
+# MotorOpenloop_SetStepMs() clamps any non-zero value to 5..500 ms; only 0 truly
+# holds a step. This used to be 60000, which became 500 ms and silently turned
+# every "static" step into 8 commutations per hold -- see
+# docs/measurement-validity.md section 1.4.
+STATIC_STEP_MS=0
 
 build_flash() {
   local phase=$1 auto=$2 step_ms=$3
