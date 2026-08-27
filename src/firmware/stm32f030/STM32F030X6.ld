@@ -29,7 +29,11 @@ ENTRY(Reset_Handler)
 /* Highest address of the user mode stack */
 _estack = 0x20001000;    /* end of 4K RAM */
 /* Generate a link error if heap and stack don't fit into RAM */
-_Min_Heap_Size = 0x100;      /* required amount of heap  */
+/* No malloc anywhere in the image (nano.specs + nosys.specs, and nm shows no
+ * malloc/sbrk), so reserving a heap only shrinks the RAM available to the trace
+ * buffer and the FOC state. Kept as a named symbol so raising it is a one-line
+ * change if a heap is ever needed. */
+_Min_Heap_Size = 0x0;        /* required amount of heap  */
 _Min_Stack_Size = 0x400; /* required amount of stack */
 
 /* Specify the memory areas */

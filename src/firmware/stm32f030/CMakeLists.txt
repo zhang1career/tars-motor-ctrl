@@ -45,6 +45,17 @@ option(MOTOR_UVW_SWEEP "Rotate U/V/W pin remap every ~2s during openloop" OFF)
 option(MOTOR_HS_ONLY "Diagnostic: drive PWM leg high side only (no complementary low side)" OFF)
 option(MOTOR_START_HALL6 "Auto-start hall closed loop instead of open loop" OFF)
 option(MOTOR_START_DIAG "Auto-start one static commutation step (no rotation)" OFF)
+option(MOTOR_START_BENCH "Run the control-ISR cycle bench at boot (motor off)" OFF)
+option(MOTOR_ADC "PWM-synchronous phase current + bus voltage sampling (stage C)" ON)
+option(MOTOR_ANGLE "Continuous rotor electrical angle from the halls (stage D)" ON)
+set(MOTOR_ANGLE_OFFSET_Q16 "" CACHE STRING
+    "Hall anchor to electrical angle offset, 65536 per revolution (stage E calibration)")
+option(MOTOR_ADC_STROBE "Pulse TP1 (PA15) at end of ADC sequence for scope checks" OFF)
+option(MOTOR_TRACE "On-chip per-tick sample buffer (stage A1); costs ~2 KB RAM" ON)
+set(MOTOR_ADC_LEAD_COUNTS "" CACHE STRING
+    "Timer counts before the centre-aligned peak at which the ADC sequence starts (default 336 = 7 us)")
+set(MOTOR_TRACE_DEPTH "" CACHE STRING "Trace samples per channel (default 256)")
+set(MOTOR_TRACE_DECIM "" CACHE STRING "Keep one sample every N control ticks (default 1)")
 # The stage-B float FOC from sim/codegen_stm32 costs ~12 KB flash and ~0.5 KB RAM
 # (soft-float libm). Its verdict is already recorded -- 15~18k cycles, see
 # docs/mainboard-spec.md section 0 -- so keep it out of the runtime image and
@@ -87,9 +98,26 @@ endif()
 if(MOTOR_START_DIAG)
   add_compile_definitions(MOTOR_START_DIAG=1)
 endif()
+if(MOTOR_START_BENCH)
+  add_compile_definitions(MOTOR_START_BENCH=1)
+endif()
+if(MOTOR_TRACE)
+  add_compile_definitions(MOTOR_TRACE=1)
+endif()
+if(MOTOR_ADC)
+  add_compile_definitions(MOTOR_ADC=1)
+endif()
+if(MOTOR_ADC_STROBE)
+  add_compile_definitions(MOTOR_ADC_STROBE=1)
+endif()
+if(MOTOR_ANGLE)
+  add_compile_definitions(MOTOR_ANGLE=1)
+endif()
 foreach(_motor_param MOTOR_DUTY_PCT MOTOR_TIM1_DTG MOTOR_PULSE_COUNTS MOTOR_STEP_MS
                      MOTOR_PHASE_OFFSET MOTOR_HALL6_KICK_DUTY MOTOR_HALL6_RUN_DUTY
-                     MOTOR_HALL6_PHASE MOTOR_HALL6_CCW)
+                     MOTOR_HALL6_PHASE MOTOR_HALL6_CCW
+                     MOTOR_TRACE_DEPTH MOTOR_TRACE_DECIM MOTOR_ADC_LEAD_COUNTS
+                     MOTOR_ANGLE_OFFSET_Q16)
   if(NOT "${${_motor_param}}" STREQUAL "")
     add_compile_definitions(${_motor_param}=${${_motor_param}}U)
   endif()
@@ -101,6 +129,18 @@ set(FOC_DIR  ${CMAKE_SOURCE_DIR}/../../../sim/codegen_stm32)
 file(GLOB APP_SRC  ${CMAKE_SOURCE_DIR}/App/*.c)
 file(GLOB CORE_SRC ${CMAKE_SOURCE_DIR}/Core/Src/*.c)
 file(GLOB PLAT_SRC ${PLAT_DIR}/*.c)
+
+if(NOT MOTOR_TRACE)
+  # Drop the translation unit rather than rely on --gc-sections: the buffer is a
+  # 2 KB global and it should be provably absent, not probably collected.
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_trace.c)
+endif()
+if(NOT MOTOR_ADC)
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_adc.c)
+endif()
+if(NOT MOTOR_ANGLE)
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_angle.c)
+endif()
 
 if(MOTOR_FOC_BENCH)
   add_compile_definitions(MOTOR_FOC_BENCH=1)
@@ -117,6 +157,10 @@ else()
   set(FOC_LINK_OPTS "")
 endif()
 
+if(NOT MOTOR_START_BENCH)
+  list(REMOVE_ITEM APP_SRC ${CMAKE_SOURCE_DIR}/App/ctrl_bench.c)
+endif()
+
 set(HAL_SRC
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal.c
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_cortex.c
@@ -131,6 +175,8 @@ set(HAL_SRC
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_exti.c
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_tim.c
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_tim_ex.c
+  ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_adc.c
+  ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_adc_ex.c
 )
 
 add_executable(${PROJECT_NAME}.elf

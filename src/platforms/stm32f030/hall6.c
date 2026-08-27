@@ -2,6 +2,9 @@
 #include "motor_hall.h"
 #include "motor_pwm.h"
 #include "motor_tick.h"
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+#include "motor_trace.h"
+#endif
 
 #define MOTOR_HALL6_DEFAULT_DUTY   6U
 #define MOTOR_HALL6_DEFAULT_RUN    7U
@@ -34,7 +37,7 @@ static const uint8_t s_seq_cw[6] = { 5U, 1U, 3U, 2U, 6U, 4U };
 static const uint8_t s_seq_ccw[6] = { 5U, 4U, 6U, 2U, 3U, 1U };
 
 static motor_hall6_snapshot_t s_hall6_snap;
-static volatile uint8_t s_enable;
+static volatile uint8_t s_hall6_enable;
 static uint8_t s_initialized;
 static uint8_t s_last_gpio_hall;
 static uint8_t s_kick_active;
@@ -43,6 +46,10 @@ static uint32_t s_kick_div;
 static uint32_t s_kick_steps;
 static uint8_t s_kick_sync;
 static uint8_t s_phase_offset;
+/* Control ticks since the last hall edge. One hall sector is 60 electrical
+ * degrees, so this is the raw material for the continuous angle in stage D --
+ * and on its own it already gives per-sector speed. */
+static uint16_t s_ticks_since_edge;
 static uint8_t s_kick_duty_pct;
 static uint8_t s_run_duty_pct;
 static uint8_t s_moe_pending;
@@ -53,7 +60,7 @@ static void hall6_moe_release(void);
 
 static void hall6_disable_outputs(void)
 {
-  s_enable = 0U;
+  s_hall6_enable = 0U;
   s_kick_active = 0U;
   s_moe_pending = 0U;
   MotorTick_Stop();
@@ -302,13 +309,13 @@ void MotorHall6_Init(void)
   s_phase_offset = 3U;
   s_hall6_snap.phase = 3U;
   s_hall6_snap.direction = 0U;
-  s_enable = 0U;
+  s_hall6_enable = 0U;
   s_initialized = 1U;
 }
 
 int MotorHall6_IsEnabled(void)
 {
-  return (s_enable != 0U) ? 1 : 0;
+  return (s_hall6_enable != 0U) ? 1 : 0;
 }
 
 void MotorHall6_SetDutyPct(uint8_t pct)
@@ -383,7 +390,7 @@ int MotorHall6_Enable(int enable)
       return 0;
     }
 
-    s_enable = 1U;
+    s_hall6_enable = 1U;
     s_last_gpio_hall = 0xFFU;
     snap = s_hall6_snap;
     snap.enabled = 1U;
@@ -427,7 +434,7 @@ void MotorHall6_ControlLoopISR(void)
   uint8_t hall;
   uint8_t hall_edge = 0U;
 
-  if (s_enable == 0U)
+  if (s_hall6_enable == 0U)
   {
     return;
   }
@@ -478,4 +485,22 @@ void MotorHall6_ControlLoopISR(void)
   snap.phase = s_phase_offset;
   snap.loop_count++;
   hall6_store(&snap);
+
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+  if (hall_edge != 0U)
+  {
+    s_ticks_since_edge = 0U;
+  }
+  else if (s_ticks_since_edge < 0x7FFFU)
+  {
+    s_ticks_since_edge++;
+  }
+  /* One producer per capture: motor_tick.c pushes the current channels when the
+   * host arms a different source. */
+  if (g_motor_trace.source == MOTOR_TRACE_SRC_HALL6)
+  {
+    MotorTrace_Push((int16_t)hall, (int16_t)snap.step,
+                    (int16_t)s_ticks_since_edge, (int16_t)snap.kick);
+  }
+#endif
 }

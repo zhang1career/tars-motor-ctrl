@@ -130,7 +130,19 @@ checks = [
      f"ticks are being missed, or the window timing is off"),
     ("hall valid", b["fault"] == 0, "fault=1: hall code read 0 or 7"),
     ("kick finished", b["kick"] == 0, "still kicking: hall sync never happened"),
-    ("spinning", elec_hz > 1.0, f"{elec_hz:.1f} elec rev/s"),
+    # A stalled rotor and a dead output look the same in the speed number but
+    # not in the current: holding one commutation step draws roughly
+    # D_eff * 12/1.3 on the bus, about 0.25 A at 20% duty, while no drive draws
+    # the 4 mA idle. The open-loop kick fails to catch the rotor perhaps one
+    # start in five depending on where it happens to be parked, and then it
+    # times out after 40 steps and leaves exactly that static hold.
+    ("spinning", elec_hz > 1.0,
+     f"{elec_hz:.1f} elec rev/s with {i2:.3f} A on the bus -- "
+     + ("rotor is stalled under a static commutation hold; the open-loop kick "
+        "timed out without ever syncing, which is intermittent on this motor. "
+        "Re-run before suspecting a code change"
+        if i2 > 0.15 else
+        "no drive current either, so the outputs are not switching at all")),
     ("bus not in CC", vbus >= 11.5,
      f"{vbus:.2f} V loaded vs ~11.98 V idle: supply is current limiting, so "
      f"every comparison at this operating point is void (roadmap 1.6)"),

@@ -90,11 +90,19 @@ flash_elf() {
   fi
 }
 
-# Clear MOE and CCER only; preserves DTG so dead time survives a stop.
+# Stop the controller, then the outputs. Preserves DTG so dead time survives.
+#
+# Clearing MOE and CCER alone is not enough: the control ISR keeps running and
+# rewrites CCER on the next hall edge, which the coasting rotor supplies. That
+# leaves the board armed rather than stopped, and board_check.sh flags it. So
+# clear the two enable flags first -- both are volatile, so the ISR sees them.
 motor_off() {
-  ocd -c 'init' -c 'halt' -c 'rbp all' \
-      -c "mmw $TIM1_BDTR 0 0x8000" -c "mww $TIM1_CCER 0" \
-      -c 'resume' -c 'exit' >/dev/null
+  local cmds=() sym addr
+  for sym in s_hall6_enable s_ol_enable; do
+    addr=$(sym_addr "$sym" 2>/dev/null) && cmds+=(-c "mwb $addr 0")
+  done
+  ocd -c 'init' "${cmds[@]}" \
+      -c "mmw $TIM1_BDTR 0 0x8000" -c "mww $TIM1_CCER 0" -c 'exit' >/dev/null
 }
 
 # UT61E serial telemetry drops frames occasionally; retry before giving up.

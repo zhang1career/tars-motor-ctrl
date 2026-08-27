@@ -9,6 +9,10 @@
 | `motor_pwm.c/.h` | TIM1 六路互补 PWM（20 kHz 中心对齐）、死区、MOE 控制 |
 | `motor_hall.c/.h` | Hall GPIO 读取 |
 | `motor_tick.c/.h` | 控制环 ISR 分发（hall6 / openloop），跑在 **TIM1 update** 上 |
+| `motor_trace.c/.h` | 逐拍采样缓冲（4 ch × 256，2 KB），主机侧 `scripts/trace_dump.py` |
+| `motor_adc.c/.h` | PWM 同步的三相电流 + 母线电压采样（TIM1 CH4 → TRGO → ADC → DMA） |
+| `motor_angle.c/.h` | Hall 连续电角度（锚点 + per-sector 时长记忆外推） |
+| `motor_cycles.c/.h` | 目标板执行时间测量，**TIM16** 自由运行计数器 |
 
 正式控制方式是 **hall6 闭环**；`openloop.c` 只在实机排查时用（配合
 `src/firmware/stm32f030/scripts/` 下的扫描脚本）。
@@ -26,7 +30,19 @@ phase 3, kick duty 20%, run duty 20%, direction 0（顺时针；1 为逆时针�
 update，因此 `motor_pwm.c` 里 `RepetitionCounter = 1`，才能得到
 `MOTOR_CTRL_ISR_HZ`（20 kHz）而不是它的两倍。
 
-`HAL_TIM_PeriodElapsedCallback()` 里的 TIM3 分支是迁移期遗留，当前 TIM3 未初始化。
+**TIM3 完全空着**，留给转子角度的输入捕获（LQFP-32 上只有 PB4=CH1、PB5=CH2 能接到
+`HALL_B`/`HALL_C`）。`motor_cycles.c` 的周期计数器因此用 **TIM16**，
+迁移期遗留的 TIM3 中断分发已删除。
+
+## 逐拍观测（motor_trace）
+
+控制环唯一的细粒度观测手段。要点只有两条，都在
+[`measurement-validity.md`](../../../docs/measurement-validity.md) 里有完整推导：
+
+1. **读之前缓冲必须静止**（one-shot 自停，或对 wrap 写 `mode=0` 冻结）。
+   256 拍只有 12.8 ms，而读出要约 1 s——边读边写会得到几十个片段的拼接。
+2. **`ticks_since_edge` 是连贯性判据**：每个 Hall 边沿样本的值必须小于抽取比。
+   它同时能把扇区长度精确重建到 50 µs，与抽取率无关。
 
 ## 相位状态编码
 

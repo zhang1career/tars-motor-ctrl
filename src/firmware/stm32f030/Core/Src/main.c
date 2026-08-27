@@ -1,5 +1,8 @@
 #include "main.h"
 #include "motor_app.h"
+#if defined(MOTOR_START_BENCH) && (MOTOR_START_BENCH != 0)
+#include "ctrl_bench.h"
+#endif
 #include "motor_pwm.h"
 #include "motor_hall.h"
 #include "motor_tick.h"
@@ -16,6 +19,12 @@ int main(void)
   MotorTick_Init();
   MotorApp_Init();
   (void)motor_swd_entry[0];
+
+#if defined(MOTOR_START_BENCH) && (MOTOR_START_BENCH != 0)
+  /* Pure CPU measurement with the motor off. Reached by reset rather than by a
+   * gdb call, which docs/roadmap.md 9.5 rules out for measurements. */
+  MotorCtrlBench_Run();
+#endif
 
 #if defined(MOTOR_AUTO_START) && (MOTOR_AUTO_START != 0)
 #if defined(MOTOR_START_DIAG) && (MOTOR_START_DIAG != 0)

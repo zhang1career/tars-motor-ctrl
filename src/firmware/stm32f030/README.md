@@ -53,6 +53,16 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 |------|------|
 | `MOTOR_AUTO_START` | 上电即启动（默认 OFF） |
 | `MOTOR_START_HALL6` | 自启动走 hall6 闭环，否则走纯开环（默认 OFF） |
+| `MOTOR_START_DIAG` | 自启动一个**静态换相步**（不换相、不转），duty 取 `MOTOR_DUTY_PCT` 且内部限幅 ≤7% |
+| `MOTOR_START_BENCH` | 上电跑控制 ISR 周期数台架（电机不通电），结果在 `g_ctrl_bench` |
+| `MOTOR_ANGLE` | Hall 连续电角度（默认 ON） |
+| `MOTOR_ANGLE_OFFSET_Q16` / `MOTOR_ANGLE_ANCHOR_TRIM` | 角度标定结果（65536/电周期），阶段 E 用 `id` 测定，默认全零 |
+| `MOTOR_ADC` | PWM 同步的相电流 + 母线电压采样（默认 ON） |
+| `MOTOR_ADC_LEAD_COUNTS` | ADC 序列比计数峰值提前多少计数（默认 336 = 7 µs）。duty 超过约 67% 要减小它 |
+| `MOTOR_ADC_STROBE` | 在 ADC 序列结束时脉冲 TP1，供示波器验证采样点（默认 **OFF**）。它的沿会在 ISENSE 上耦合出百 mV 级尖峰，只在示波器会话里开 |
+| `MOTOR_TRACE` | 逐拍采样缓冲（默认 ON，约 2 KB RAM） |
+| `MOTOR_TRACE_DEPTH` / `MOTOR_TRACE_DECIM` | 缓冲深度 / 每 N 拍存一次（默认 256 / 1） |
+| `MOTOR_FOC_BENCH` | 链接 `sim/codegen_stm32` 的浮点 FOC 与周期数台架（默认 OFF，开启后约 +12 KB flash / +0.5 KB RAM） |
 | `MOTOR_HALL6_KICK_DUTY` / `MOTOR_HALL6_RUN_DUTY` | hall6 起转 / 运行 duty（上限 25%） |
 | `MOTOR_HALL6_PHASE` / `MOTOR_HALL6_CCW` | hall6 换相相位偏移 0..5 / 反转 |
 | `MOTOR_TIM1_DTG` | TIM1 BDTR 死区寄存器原始值（默认 72） |
@@ -74,10 +84,20 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 
 | 脚本 | 用途 |
 |------|------|
-| `scripts/bench_common.sh` | 公共函数（探头预检、烧录校验、断电、DMM 读数重试），被下面三个 source |
+| `scripts/bench_common.sh` | 公共函数：探头预检、烧录校验、断电、DMM 读数重试，以及 `sym_addr`（从 ELF 解析地址，**不要硬编码**）、`read_words`（不 halt 读内存）、`cpu_alive` |
+| `scripts/board_check.sh` | **每次测试前先跑这个**。VDDA / 母线 / `V_BOOST` / 故障线 / PA11 / Hall 码 / 三路电流零点，逐条判据，不通过即非零退出。加 `--running` 可在电机运行中跑 |
+| `scripts/board_probe.tcl` | 上面那个用的 openocd 侧探针（TIM1 寄存器 + GPIO + 一次 ADC 扫描），全程不 halt |
+| `scripts/static_step.sh` | 静态单步通电，读三路 ISENSE：验证桥臂↔分流对应、INA240 符号、斩波下 `nFAULT` 不误跳 |
+| `scripts/hall6_regress.sh` | hall6 正反转回归，逐条对照 roadmap 1.2 |
+| `scripts/trace_dump.py` | 导出逐拍 trace 并画图，落在 `models/captured/`。含撕裂检测与扇区分析 |
+| `scripts/isense_cal.sh` | 阶段 C 标定：静态步扫 duty，比对 ADC 电流与母线反推值 |
+| `scripts/scope_capture.py` | 通过 VISA 采 Rigol DS1104Z 四通道，存 CSV + PNG |
+| `scripts/ctrl_bench.sh` | 控制 ISR 各部件的周期数实测（走烧录+reset，不用 `gdb call`） |
+| `scripts/foc_bench.sh` | 阶段 B 的 FOC 周期数测量（需 `-DMOTOR_FOC_BENCH=ON`） |
 | `scripts/duty_sweep.sh` | 按 duty 百分比扫描，读母线电流 |
 | `scripts/ccr_sweep.sh` | 按 CCR 计数扫描（duty 百分比在死区阈值附近粒度不够时用） |
 | `scripts/step_table.sh` | 逐个静态保持 6 个换相步，检查三相是否对称 |
+| `scripts/pole_pairs.sh` | 数极对数（已实测 4） |
 
 ## API
 

@@ -22,6 +22,7 @@ HOLD_S="${HOLD_S:-2}"
 PASSES="${PASSES:-16}"
 
 require_dap
+motor_off   # do not trust the previous run's cleanup
 
 echo "== baseline (outputs off) =="
 "$ROOT/scripts/board_check.sh"

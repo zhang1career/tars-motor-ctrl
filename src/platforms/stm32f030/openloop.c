@@ -31,7 +31,7 @@ static const uint8_t s_seq_cw[6] = { 5U, 1U, 3U, 2U, 6U, 4U };
 static const uint8_t s_seq_ccw[6] = { 5U, 4U, 6U, 2U, 3U, 1U };
 
 static motor_openloop_snapshot_t s_ol_snap;
-static volatile uint8_t s_enable;
+static volatile uint8_t s_ol_enable;
 static uint8_t s_initialized;
 static uint8_t s_hall_sync;
 static uint8_t s_hall_stable;
@@ -446,13 +446,13 @@ void MotorOpenloop_Init(void)
   s_hall_locked = 0U;
   s_hall_last_edge_loop = 0U;
   s_hall_phase = 3U;
-  s_enable = 0U;
+  s_ol_enable = 0U;
   s_initialized = 1U;
 }
 
 int MotorOpenloop_IsEnabled(void)
 {
-  return (s_enable != 0U) ? 1 : 0;
+  return (s_ol_enable != 0U) ? 1 : 0;
 }
 
 void MotorOpenloop_SetDutyPct(uint8_t pct)
@@ -565,7 +565,7 @@ int MotorOpenloop_Enable(int enable)
     }
 
     s_step_div = 0U;
-    s_enable = 1U;
+    s_ol_enable = 1U;
     s_hall_invert = 0U;
     s_kick_invert = 0U;
     s_hall_spin = 0;
@@ -601,7 +601,7 @@ int MotorOpenloop_Enable(int enable)
     return 1;
   }
 
-  s_enable = 0U;
+  s_ol_enable = 0U;
   MotorTick_Stop();
   MotorPwm_Stop();
 
@@ -616,7 +616,7 @@ void MotorOpenloop_ControlLoopISR(void)
   motor_openloop_snapshot_t snap;
   uint32_t ticks;
 
-  if (s_enable == 0U)
+  if (s_ol_enable == 0U)
   {
     return;
   }

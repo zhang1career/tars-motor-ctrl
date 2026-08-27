@@ -31,14 +31,12 @@ static void foc_bench_step_once(void)
                  s_case.enable, &s_da, &s_db, &s_dc, &s_theta, &s_speed, &s_id, &s_iq);
 }
 
+/* Exactly 100 NOP instructions. A loop with a volatile counter costs ~16 cycles
+ * per iteration, so it reads ~1600 and looks like a broken counter -- this used
+ * to be reported against an expectation of 100. */
 static void nop100_loop(void)
 {
-  volatile uint32_t n;
-
-  for (n = 0U; n < 100U; n++)
-  {
-    __NOP();
-  }
+  __asm volatile(".rept 100\n\tnop\n\t.endr");
 }
 
 static uint32_t median_u16_samples(uint16_t *v, uint8_t count)
