@@ -1,4 +1,5 @@
 #include "motor_app.h"
+#include "foc_bench.h"
 #include "hall6.h"
 #include "openloop.h"
 #include "motor_pwm.h"
@@ -109,6 +110,12 @@ __attribute__((used)) void MotorApp_DiagStop(void)
   MotorApp_Stop();
 }
 
+__attribute__((used)) void MotorApp_RunFocBench(void)
+{
+  MotorApp_Stop();
+  MotorFocBench_Run();
+}
+
 __attribute__((used)) void *const motor_swd_entry[] = {
   (void *)MotorApp_Start,
   (void *)MotorApp_Stop,
@@ -116,4 +123,5 @@ __attribute__((used)) void *const motor_swd_entry[] = {
   (void *)MotorApp_StartOpenloop6Cfg,
   (void *)MotorApp_DiagGPhase,
   (void *)MotorApp_DiagStop,
+  (void *)MotorApp_RunFocBench,
 };

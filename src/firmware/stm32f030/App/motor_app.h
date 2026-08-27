@@ -16,6 +16,9 @@ int  MotorApp_StartOpenloop6Cfg(uint8_t phase, uint8_t uv_perm, uint8_t dir_ccw,
 int  MotorApp_DiagGPhase(uint8_t duty_pct);
 void MotorApp_DiagStop(void);
 
+/* Stage B: run FOC codegen timing bench (motor off, no PWM). */
+void MotorApp_RunFocBench(void);
+
 extern void *const motor_swd_entry[];
 
 #endif /* MOTOR_APP_H */

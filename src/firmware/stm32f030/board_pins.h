@@ -38,9 +38,9 @@
 #define BOARD_ADC_IW_CH        ADC_CHANNEL_3   /* PA3 board3 I_SENSE */
 
 /* ---- Hall (digital, 3.3 V): yellow / green / blue ---- */
-#define BOARD_HALL_A_PIN       GPIO_PIN_4   /* PB4 yellow Ha */
+#define BOARD_HALL_A_PIN       GPIO_PIN_3   /* PB3 — HALL_A (yellow Ha) */
 #define BOARD_HALL_A_PORT      GPIOB
-#define BOARD_HALL_B_PIN       GPIO_PIN_3   /* PB3 green Hb */
+#define BOARD_HALL_B_PIN       GPIO_PIN_4   /* PB4 — HALL_B (green Hb) */
 #define BOARD_HALL_B_PORT      GPIOB
 #define BOARD_HALL_C_PIN       GPIO_PIN_5   /* PB5 blue Hc */
 #define BOARD_HALL_C_PORT      GPIOB
@@ -54,7 +54,7 @@
 /* ---- Debug ---- */
 #define BOARD_SWDIO_PIN        GPIO_PIN_13  /* PA13 */
 #define BOARD_SWCLK_PIN        GPIO_PIN_14  /* PA14 */
-#define BOARD_EVENTOUT_PIN     GPIO_PIN_15  /* PA15 — reserved */
-#define BOARD_EVENTOUT_PORT    GPIOA
+#define BOARD_TP_CYCLE_PIN     GPIO_PIN_15  /* PA15 — TP1, net TP_CYCLE (scope strobe) */
+#define BOARD_TP_CYCLE_PORT    GPIOA
 
 #endif /* BOARD_PINS_H */

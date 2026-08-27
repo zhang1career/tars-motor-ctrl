@@ -1,6 +1,6 @@
 # motor-ctrl 固件（STM32F030K6）
 
-Hall 闭环 6-step BLDC 控制，自 TARS `tars_hall6.c` 迁移。纯开环（`tars_openloop.c` 一路）保留作台架诊断。
+Hall 闭环 6-step BLDC 控制，自 TARS `tars_hall6.c` 迁移。纯开环（`tars_openloop.c` 一路）保留作实机诊断。
 
 ## 目录
 
@@ -11,7 +11,7 @@ src/firmware/stm32f030/
 ├── board_pins.h          # PCB 管脚
 ├── CMakeLists.txt
 ├── Drivers/              # STM32CubeF0 HAL（自 tars-io-mux 复制）
-├── scripts/              # flash.sh + 台架扫描脚本（见下）
+├── scripts/              # flash.sh + 测试扫描脚本（见下）
 └── openocd.cfg
 
 src/platforms/stm32f030/  # hall6 / 开环算法 + PWM / Hall / TIM1 控制环
@@ -19,7 +19,7 @@ src/platforms/stm32f030/  # hall6 / 开环算法 + PWM / Hall / TIM1 控制环
 
 ## 默认运行参数
 
-台架实测得出，**不等于 TARS 的数字**（死区口径不同，见「已知陷阱」）：
+实测得出，**不等于 TARS 的数字**（死区口径不同，见「已知陷阱」）：
 
 ```
 hall6 闭环：phase 3, kick duty 20%, run duty 20%, direction 0（顺时针；1 为逆时针）
@@ -68,7 +68,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 ./src/firmware/stm32f030/scripts/flash.sh
 ```
 
-## 台架脚本
+## 测试脚本
 
 都会在收尾时刷回 `AUTO_START=OFF` 的安全固件，并在探头缺失或烧录失败时报错退出。
 
@@ -95,7 +95,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 
 ## 已知陷阱
 
-这几条都是台架上花了很大代价才定位的，改动 PWM 相关代码前务必先读：
+这几条都是实测中花了很大代价才定位的，改动 PWM 相关代码前务必先读：
 
 1. **低边常通不能用 `CCR=0`。** `CCxE=0, CCxNE=1` 时 OCxN 引脚**直接跟随 OCxREF**（不反相、不插死区），所以 `CCR=0` 会让低边恒关、回流臂断开、电机毫无力矩。必须让 OCxREF 恒为有效，即 `CCR = ARR+1`。TARS 在 F429 上是同样写法。
 2. **中心对齐必须 `RCR=1`。** 上溢和下溢各产生一次 update 事件，`RCR=0` 时控制环会跑在 `2 × MOTOR_PWM_HZ`，所有基于 `MOTOR_CTRL_ISR_HZ` 的时间常数（Hall 消抖、堵转超时、kick 间隔）都会差一倍。
@@ -103,6 +103,6 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 4. **`MotorOpenloop_SetStepMs()` 把非零值限幅到 5..500 ms**，传 60000 会被压成 500 ms。需要真正不换相时传 **0**。
 5. **换向必须换驱动表，不能只移相。** `s_seq_ccw` 是 `s_seq_cw` 关于索引 0 的反序，所以「按 ccw 表映射」等价于「偏移 −p」；而 6 元循环里 `−p ≡ p` 恰好发生在 **p=0 和 p=3**——而这两个又是唯一高效的偏移（约 60 mA；±60° 的 p=1/2/4/5 要 0.25 A）。结果就是只靠 `direction` 位在 p=0/3 上完全无效。真正的换向是把 **PWM 相与 LOW 相互换**（`hall6_lookup()` 的 `reverse` 分支、`ol_lookup_step()` 的 ccw 分支），力矩反向而幅值不变。
 5. **半桥板 VOUT 对地的滤波电容必须拆掉。** 那块板按 buck 输出级设计，VOUT 上的电容会被高边充、低边放，形成一条约 96 mΩ 的通路吃掉约 1.5 A（∝ 导通时间、与死区无关、与电机是否接入无关），电机只能吃残羹。拆掉后母线电流降约 80~100 倍，并从「线性 ∝ 导通时间」变为「平方 ∝ duty²」的正常电机特性。
-6. **`MotorApp_Start()` 等 SWD 调用不可靠**（gdb `call` 返回正常但外设状态常对不上），台架验证请用 `MOTOR_AUTO_START` 烧录后 reset 的路径。另外 OpenOCD `program ... reset` 会在 `Reset_Handler` 留断点，测量前必须 `rbp all` + `resume`，否则 CPU 根本没跑到 `main`。
+6. **`MotorApp_Start()` 等 SWD 调用不可靠**（gdb `call` 返回正常但外设状态常对不上），实测验证请用 `MOTOR_AUTO_START` 烧录后 reset 的路径。另外 OpenOCD `program ... reset` 会在 `Reset_Handler` 留断点，测量前必须 `rbp all` + `resume`，否则 CPU 根本没跑到 `main`。
 
 I²C 从机 / TNB 寄存器：待 `shared/tnb` 与 `App/motor_node.c` 后续添加。

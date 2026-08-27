@@ -87,10 +87,17 @@ foreach(_motor_param MOTOR_DUTY_PCT MOTOR_TIM1_DTG MOTOR_PULSE_COUNTS MOTOR_STEP
 endforeach()
 
 set(PLAT_DIR ${CMAKE_SOURCE_DIR}/../../platforms/stm32f030)
+set(FOC_DIR  ${CMAKE_SOURCE_DIR}/../../../sim/codegen_stm32)
 
 file(GLOB APP_SRC  ${CMAKE_SOURCE_DIR}/App/*.c)
 file(GLOB CORE_SRC ${CMAKE_SOURCE_DIR}/Core/Src/*.c)
 file(GLOB PLAT_SRC ${PLAT_DIR}/*.c)
+
+set(FOC_SRC
+  ${FOC_DIR}/foc_step_stm32.c
+  ${FOC_DIR}/foc_step_stm32_data.c
+  ${FOC_DIR}/foc_step_stm32_initialize.c
+)
 
 set(HAL_SRC
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal.c
@@ -112,6 +119,7 @@ add_executable(${PROJECT_NAME}.elf
   ${APP_SRC}
   ${CORE_SRC}
   ${PLAT_SRC}
+  ${FOC_SRC}
   ${HAL_SRC}
   ${CMAKE_SOURCE_DIR}/startup_stm32f030x6.s)
 
@@ -120,6 +128,7 @@ target_include_directories(${PROJECT_NAME}.elf PRIVATE
   ${CMAKE_SOURCE_DIR}/App
   ${CMAKE_SOURCE_DIR}/Core/Inc
   ${PLAT_DIR}
+  ${FOC_DIR}
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Inc
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Inc/Legacy
   ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F0xx/Include
@@ -137,6 +146,8 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
   -Wl,--undefined=MotorApp_DiagGPhase
   -Wl,--undefined=MotorApp_DiagStop
   -Wl,--undefined=MotorHall6_Enable
+  -Wl,--undefined=MotorFocBench_Run
+  -lm
   -Wl,--print-memory-usage
   -Wl,-Map=${PROJECT_NAME}.map)
 

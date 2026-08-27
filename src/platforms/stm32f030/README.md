@@ -5,15 +5,15 @@
 | 文件 | 职责 |
 |------|------|
 | `hall6.c/.h` | Hall 闭环 6-step：kick 启动、MOE 延迟释放、phase 偏移 |
-| `openloop.c/.h` | 6-step / 3-step 开环 + Hall lock/kick/stall（台架诊断用） |
+| `openloop.c/.h` | 6-step / 3-step 开环 + Hall lock/kick/stall（实机诊断用） |
 | `motor_pwm.c/.h` | TIM1 六路互补 PWM（20 kHz 中心对齐）、死区、MOE 控制 |
 | `motor_hall.c/.h` | Hall GPIO 读取 |
 | `motor_tick.c/.h` | 控制环 ISR 分发（hall6 / openloop），跑在 **TIM1 update** 上 |
 
-正式控制方式是 **hall6 闭环**；`openloop.c` 只在台架排查时用（配合
+正式控制方式是 **hall6 闭环**；`openloop.c` 只在实机排查时用（配合
 `src/firmware/stm32f030/scripts/` 下的扫描脚本）。
 
-默认应用参数见 `App/motor_app.c`，由台架实测得出：
+默认应用参数见 `App/motor_app.c`，由实测得出：
 
 ```
 phase 3, kick duty 20%, run duty 20%, direction 0（顺时针；1 为逆时针）
