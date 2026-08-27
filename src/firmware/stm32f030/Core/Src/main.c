@@ -3,6 +3,9 @@
 #if defined(MOTOR_START_BENCH) && (MOTOR_START_BENCH != 0)
 #include "ctrl_bench.h"
 #endif
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+#include "motor_foc.h"
+#endif
 #include "motor_pwm.h"
 #include "motor_hall.h"
 #include "motor_tick.h"
@@ -27,7 +30,9 @@ int main(void)
 #endif
 
 #if defined(MOTOR_AUTO_START) && (MOTOR_AUTO_START != 0)
-#if defined(MOTOR_START_DIAG) && (MOTOR_START_DIAG != 0)
+#if defined(MOTOR_START_FOC_OBSERVE) && (MOTOR_START_FOC_OBSERVE != 0)
+  (void)MotorApp_StartFocObserve();
+#elif defined(MOTOR_START_DIAG) && (MOTOR_START_DIAG != 0)
   (void)MotorApp_StartDiagStep();
 #elif defined(MOTOR_START_HALL6) && (MOTOR_START_HALL6 != 0)
   (void)MotorApp_Start();
@@ -38,7 +43,16 @@ int main(void)
 
   for (;;)
   {
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+    /* Float FOC observation runs here rather than in the control ISR: it takes
+     * 16173 cycles and the tick is 2400 (roadmap 3.3.2). The ISR preempts it, so
+     * the control loop is unaffected; the cost is only that samples arrive at
+     * whatever rate the loop achieves, which is plenty for watching id.
+     * MotorFoc_Step() returns immediately unless a mode is set. */
+    MotorFoc_Step();
+#else
     __WFI();
+#endif
   }
 }
 

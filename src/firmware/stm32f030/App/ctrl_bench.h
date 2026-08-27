@@ -16,7 +16,7 @@
  * Budget for reference: 20 kHz on a 48 MHz M0 is 2400 cycles per tick.
  */
 
-#define MOTOR_CTRL_BENCH_CASES 4U
+#define MOTOR_CTRL_BENCH_CASES 6U
 #define MOTOR_CTRL_BENCH_RUNS 16U
 #define MOTOR_CTRL_BENCH_DONE_TAG 0xC7B00001U
 
@@ -25,7 +25,13 @@ enum
   MOTOR_CTRL_BENCH_ANGLE_STEADY = 0U, /* MotorAngle_Update, no hall edge */
   MOTOR_CTRL_BENCH_ANGLE_EDGE = 1U,   /* MotorAngle_Update across an edge */
   MOTOR_CTRL_BENCH_ADC_READ = 2U,     /* read three shunts and form the sum */
-  MOTOR_CTRL_BENCH_TRACE_PUSH = 3U    /* MotorTrace_Push */
+  MOTOR_CTRL_BENCH_TRACE_PUSH = 3U,   /* MotorTrace_Push */
+  /* One full FOC step in the closed-current mode, i.e. the worst case: Clarke,
+   * Park, both PIs with their integrators, inverse Park, SVPWM and the duty
+   * write. Includes MOTOR_FOC_DECIM-1 early returns of a few cycles each. */
+  MOTOR_CTRL_BENCH_FOC_STEP = 4U,
+  /* 100 chained float multiplies: the measured cost of soft float here. */
+  MOTOR_CTRL_BENCH_FMUL100 = 5U
 };
 
 typedef struct

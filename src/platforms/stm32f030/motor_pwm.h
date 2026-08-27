@@ -15,6 +15,18 @@ typedef enum {
 
 extern TIM_HandleTypeDef htim1;
 
+/*
+ * All three phases in complementary PWM, for FOC. Duties are 0..1.
+ *
+ * The phase currents are needed for dead-time compensation, not for control:
+ * during the dead time both switches are off and the phase is pulled to
+ * whichever rail its own current freewheels into, so the error is +DT/2 or
+ * -DT/2 depending on current sign. That is 36 counts of 1199, about 3% of the
+ * bus, i.e. 0.36 V -- and it does NOT cancel as common mode the way a uniform
+ * offset would, because each phase's error follows its own current polarity.
+ */
+void MotorPwm_SetDuties(float da, float db, float dc, float ia, float ib, float ic);
+
 void MotorPwm_Init(void);
 void MotorPwm_HardwareSafe(void);
 void MotorPwm_PinsIdle(void);

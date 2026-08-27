@@ -1,6 +1,7 @@
 #include "ctrl_bench.h"
 #include "motor_cycles.h"
 #include "motor_tick.h"
+#include "motor_pwm.h"
 #include "stm32f0xx.h"
 
 #if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
@@ -12,11 +13,15 @@
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
 #include "motor_trace.h"
 #endif
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+#include "motor_foc.h"
+#endif
 
 volatile MotorCtrlBenchResult g_ctrl_bench;
 
 /* Sinks so the optimiser cannot delete the work being timed. */
 static volatile int32_t s_sink;
+static volatile float s_fsink;
 static volatile uint8_t s_edge_hall;
 
 /*
@@ -63,6 +68,39 @@ static void bench_trace_push(void)
 {
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
   MotorTrace_Push(1, 2, 3, 4);
+#endif
+}
+
+/*
+ * 100 chained single-precision multiplies. The point is to have a measured
+ * cost-per-soft-float-operation on this part instead of a guessed one: an
+ * assumed 35 cycles produced a 1700-cycle estimate for a FOC step that actually
+ * takes 16000. A few cycles per iteration of the result are loop overhead.
+ */
+static void bench_float_mul100(void)
+{
+  volatile float a = 1.0000001f;
+  float x = 1.0f;
+  uint8_t k;
+
+  for (k = 0U; k < 100U; k++)
+  {
+    x *= a;
+  }
+  s_fsink = x;
+}
+
+static void bench_foc_step(void)
+{
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  uint8_t k;
+
+  /* Step() only does the work every MOTOR_FOC_DECIM calls, so call it that many
+   * times to time exactly one full pass. */
+  for (k = 0U; k < (uint8_t)MOTOR_FOC_DECIM; k++)
+  {
+    MotorFoc_Step();
+  }
 #endif
 }
 
@@ -149,6 +187,20 @@ void MotorCtrlBench_Run(void)
   bench_case(MOTOR_CTRL_BENCH_ANGLE_EDGE, bench_angle_edge);
   bench_case(MOTOR_CTRL_BENCH_ADC_READ, bench_adc_read);
   bench_case(MOTOR_CTRL_BENCH_TRACE_PUSH, bench_trace_push);
+  bench_case(MOTOR_CTRL_BENCH_FMUL100, bench_float_mul100);
+
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  /* Closed-current mode is the worst case. Safe with MOE clear: the duty writes
+   * land in CCR registers whose outputs are disabled. */
+  MotorFoc_Init();
+  MotorFoc_SetIqRefMa(500);
+  MotorFoc_SetMode(MOTOR_FOC_CURRENT);
+  bench_case(MOTOR_CTRL_BENCH_FOC_STEP, bench_foc_step);
+  MotorFoc_SetMode(MOTOR_FOC_OFF);
+  /* SetDuties enabled the output-compare bits on the way through; leave the
+   * timer as the pre-flight check expects to find it. */
+  MotorPwm_HardwareSafe();
+#endif
 
 #if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
   /* The edge case left the estimator full of synthetic transitions. */

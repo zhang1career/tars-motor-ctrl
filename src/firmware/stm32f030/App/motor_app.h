@@ -17,6 +17,10 @@ int  MotorApp_DiagGPhase(uint8_t duty_pct);
 int  MotorApp_StartDiagStep(void);
 void MotorApp_DiagStop(void);
 
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+int  MotorApp_StartFocObserve(void);
+#endif
+
 #if defined(MOTOR_FOC_BENCH) && (MOTOR_FOC_BENCH != 0)
 /* Stage B: run FOC codegen timing bench (motor off, no PWM). */
 void MotorApp_RunFocBench(void);

@@ -46,8 +46,13 @@ option(MOTOR_HS_ONLY "Diagnostic: drive PWM leg high side only (no complementary
 option(MOTOR_START_HALL6 "Auto-start hall closed loop instead of open loop" OFF)
 option(MOTOR_START_DIAG "Auto-start one static commutation step (no rotation)" OFF)
 option(MOTOR_START_BENCH "Run the control-ISR cycle bench at boot (motor off)" OFF)
+option(MOTOR_START_FOC_OBSERVE "Auto-start hall6 with FOC observing only (stage E step 1)" OFF)
 option(MOTOR_ADC "PWM-synchronous phase current + bus voltage sampling (stage C)" ON)
 option(MOTOR_ANGLE "Continuous rotor electrical angle from the halls (stage D)" ON)
+option(MOTOR_FOC "Hall-sensored field-oriented control (stage E)" ON)
+set(MOTOR_FOC_DECIM "" CACHE STRING "Control ticks per FOC step (default 2 = 10 kHz)")
+set(MOTOR_FOC_WC_HZ "" CACHE STRING "Current loop bandwidth in Hz (default 800)")
+set(MOTOR_FOC_LAMBDA "" CACHE STRING "Back-EMF feed-forward flux linkage in Wb (default 0)")
 set(MOTOR_ANGLE_OFFSET_Q16 "" CACHE STRING
     "Hall anchor to electrical angle offset, 65536 per revolution (stage E calibration)")
 option(MOTOR_ADC_STROBE "Pulse TP1 (PA15) at end of ADC sequence for scope checks" OFF)
@@ -101,6 +106,9 @@ endif()
 if(MOTOR_START_BENCH)
   add_compile_definitions(MOTOR_START_BENCH=1)
 endif()
+if(MOTOR_START_FOC_OBSERVE)
+  add_compile_definitions(MOTOR_START_FOC_OBSERVE=1)
+endif()
 if(MOTOR_TRACE)
   add_compile_definitions(MOTOR_TRACE=1)
 endif()
@@ -113,11 +121,19 @@ endif()
 if(MOTOR_ANGLE)
   add_compile_definitions(MOTOR_ANGLE=1)
 endif()
+if(MOTOR_FOC)
+  add_compile_definitions(MOTOR_FOC=1)
+endif()
 foreach(_motor_param MOTOR_DUTY_PCT MOTOR_TIM1_DTG MOTOR_PULSE_COUNTS MOTOR_STEP_MS
                      MOTOR_PHASE_OFFSET MOTOR_HALL6_KICK_DUTY MOTOR_HALL6_RUN_DUTY
                      MOTOR_HALL6_PHASE MOTOR_HALL6_CCW
                      MOTOR_TRACE_DEPTH MOTOR_TRACE_DECIM MOTOR_ADC_LEAD_COUNTS
-                     MOTOR_ANGLE_OFFSET_Q16)
+                     MOTOR_ANGLE_OFFSET_Q16 MOTOR_FOC_DECIM)
+foreach(_motor_float MOTOR_FOC_WC_HZ MOTOR_FOC_LAMBDA)
+  if(NOT "${${_motor_float}}" STREQUAL "")
+    add_compile_definitions(${_motor_float}=${${_motor_float}}f)
+  endif()
+endforeach()
   if(NOT "${${_motor_param}}" STREQUAL "")
     add_compile_definitions(${_motor_param}=${${_motor_param}}U)
   endif()
@@ -141,6 +157,9 @@ endif()
 if(NOT MOTOR_ANGLE)
   list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_angle.c)
 endif()
+if(NOT MOTOR_FOC)
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_foc.c)
+endif()
 
 if(MOTOR_FOC_BENCH)
   add_compile_definitions(MOTOR_FOC_BENCH=1)
@@ -148,7 +167,7 @@ if(MOTOR_FOC_BENCH)
     ${FOC_DIR}/foc_step_stm32.c
     ${FOC_DIR}/foc_step_stm32_data.c
     ${FOC_DIR}/foc_step_stm32_initialize.c)
-  set(FOC_LINK_OPTS -Wl,--undefined=MotorFocBench_Run -lm)
+  set(FOC_LINK_OPTS -Wl,--undefined=MotorFocBench_Run)
 else()
   list(REMOVE_ITEM APP_SRC
     ${CMAKE_SOURCE_DIR}/App/foc_bench.c
@@ -211,6 +230,7 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
   -Wl,--undefined=MotorApp_DiagStop
   -Wl,--undefined=MotorHall6_Enable
   ${FOC_LINK_OPTS}
+  -lm
   -Wl,--print-memory-usage
   -Wl,-Map=${PROJECT_NAME}.map)
 

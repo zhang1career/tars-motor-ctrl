@@ -11,6 +11,9 @@
 #include "motor_angle.h"
 #include "motor_hall.h"
 #endif
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+#include "motor_foc.h"
+#endif
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
 #include "motor_adc.h"
 
@@ -42,6 +45,11 @@ static void motor_tick_dispatch(void)
     MotorOpenloop_ControlLoopISR();
   }
 
+  /* The float FOC deliberately does NOT run here -- 16173 cycles against a
+   * 2400-cycle tick would overrun and drop the following ticks. It runs in the
+   * background loop; the fixed-point implementation is what belongs in the ISR.
+   */
+
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
   if (g_motor_trace.source == MOTOR_TRACE_SRC_ADC)
@@ -61,6 +69,13 @@ static void motor_tick_dispatch(void)
                     (int16_t)(g_motor_angle.theta >> 1),
                     (int16_t)g_motor_angle.ticks_in_sector,
                     (int16_t)g_motor_angle.edge_jump);
+  }
+#endif
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  if (g_motor_trace.source == MOTOR_TRACE_SRC_FOC)
+  {
+    MotorTrace_Push(g_motor_foc.id_ma, g_motor_foc.iq_ma,
+                    (int16_t)(g_motor_foc.theta >> 1), g_motor_foc.vq_mv);
   }
 #endif
 #endif

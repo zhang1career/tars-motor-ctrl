@@ -114,6 +114,65 @@ void MotorPwm_SetPhase(motor_phase_mode_t u, motor_phase_mode_t v, motor_phase_m
 
 #pragma GCC pop_options
 
+/* Below this the current sign is noise (the front end reads +-3 mA), and
+ * flipping the compensation on noise would inject a square wave at the noise
+ * rate. Ramp linearly through the band instead of switching. */
+#ifndef MOTOR_PWM_DT_COMP_BAND_A
+#define MOTOR_PWM_DT_COMP_BAND_A 0.05f
+#endif
+
+static int32_t motor_pwm_dt_comp(float i)
+{
+  const float half_dt = (float)MOTOR_TIM1_DT * 0.5f;
+  float scale;
+
+  if (i > MOTOR_PWM_DT_COMP_BAND_A)
+  {
+    scale = 1.0f;
+  }
+  else if (i < -MOTOR_PWM_DT_COMP_BAND_A)
+  {
+    scale = -1.0f;
+  }
+  else
+  {
+    scale = i * (1.0f / MOTOR_PWM_DT_COMP_BAND_A);
+  }
+
+  return (int32_t)(scale * half_dt);
+}
+
+void MotorPwm_SetDuties(float da, float db, float dc, float ia, float ib, float ic)
+{
+  TIM_TypeDef *tim = htim1.Instance;
+  int32_t arr = (int32_t)__HAL_TIM_GET_AUTORELOAD(&htim1);
+  const float duties[3] = {da, db, dc};
+  const float currents[3] = {ia, ib, ic};
+  int32_t ccr[3];
+  uint8_t k;
+
+  for (k = 0U; k < 3U; k++)
+  {
+    int32_t v = (int32_t)(duties[k] * (float)arr) + motor_pwm_dt_comp(currents[k]);
+
+    if (v < 0)
+    {
+      v = 0;
+    }
+    else if (v > arr)
+    {
+      v = arr;
+    }
+    ccr[k] = v;
+  }
+
+  tim->CCR1 = (uint32_t)ccr[0];
+  tim->CCR2 = (uint32_t)ccr[1];
+  tim->CCR3 = (uint32_t)ccr[2];
+  tim->CCER |= (TIM_CCER_CC1E | TIM_CCER_CC1NE | TIM_CCER_CC2E |
+                TIM_CCER_CC2NE | TIM_CCER_CC3E | TIM_CCER_CC3NE);
+}
+
 static void motor_pwm_clear_break(TIM_TypeDef *tim)
 {
   tim->SR &= ~TIM_SR_BIF;

@@ -12,6 +12,12 @@
 #if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
 #include "motor_angle.h"
 #endif
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+#include "motor_foc.h"
+#ifndef MOTOR_FOC_IQ_MA
+#define MOTOR_FOC_IQ_MA 300
+#endif
+#endif
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
 #include "motor_trace.h"
 #ifndef MOTOR_TRACE_DECIM
@@ -59,6 +65,9 @@ void MotorApp_Init(void)
 #endif
 #if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
   MotorAngle_Reset();
+#endif
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  MotorFoc_Init();
 #endif
   MotorApp_ApplyDefaults();
 }
@@ -160,6 +169,24 @@ __attribute__((used)) void MotorApp_DiagStop(void)
   MotorTick_Stop();
   MotorApp_Stop();
 }
+
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+/*
+ * Stage E step 1: the motor keeps running on hall6 while FOC only computes
+ * id/iq from the same samples and angle. Nothing FOC produces reaches the
+ * bridges, so a wrong angle or a wrong current sign shows up as a number rather
+ * than as a runaway.
+ */
+int MotorApp_StartFocObserve(void)
+{
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+  MotorTrace_Arm(MOTOR_TRACE_MODE_WRAP, MOTOR_TRACE_SRC_FOC, MOTOR_TRACE_DECIM);
+#endif
+  MotorFoc_SetMode(MOTOR_FOC_OBSERVE);
+  return MotorHall6_Enable(1);
+}
+
+#endif
 
 #if defined(MOTOR_FOC_BENCH) && (MOTOR_FOC_BENCH != 0)
 __attribute__((used)) void MotorApp_RunFocBench(void)
