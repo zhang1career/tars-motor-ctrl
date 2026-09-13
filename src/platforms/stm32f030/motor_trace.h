@@ -38,7 +38,9 @@ enum
   MOTOR_TRACE_SRC_HALL6 = 1U, /* hall_raw, step, ticks_since_edge, kick */
   MOTOR_TRACE_SRC_FOC = 2U,
   MOTOR_TRACE_SRC_ADC = 3U,   /* iu_lsb, iv_lsb, iw_lsb, vbus_raw */
-  MOTOR_TRACE_SRC_ANGLE = 4U  /* hall_raw, theta_q15, ticks_in_sector, edge_jump */
+  MOTOR_TRACE_SRC_ANGLE = 4U, /* hall_raw, theta_q15, ticks_in_sector, edge_jump */
+  MOTOR_TRACE_SRC_FOC_ANG = 5U, /* foc_q15, interp_q15, dth_q15, hall_raw */
+  MOTOR_TRACE_SRC_FOC_V = 6U    /* vd_mv, vq_mv, sat, iq_lsb */
 };
 
 typedef struct

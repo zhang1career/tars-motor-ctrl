@@ -16,15 +16,31 @@ source "$ROOT/scripts/bench_common.sh"
 RUNNING=0
 [[ "${1:-}" == "--running" ]] && RUNNING=1
 
+_board_ok=0
+PROBE_LOG=""
+_board_check_exit() {
+  rm -f "$PROBE_LOG"
+  if [[ "$_board_ok" != 1 ]]; then
+    host_alarm
+  fi
+}
+trap _board_check_exit EXIT
+
 require_dap
 cpu_alive
 
 PROBE_LOG=$(mktemp)
-trap 'rm -f "$PROBE_LOG"' EXIT
-ocd -c 'init' -c "source $ROOT/scripts/board_probe.tcl" -c 'exit' >"$PROBE_LOG"
+if [[ "$RUNNING" == 1 ]]; then
+  ocd -c 'init' -c 'set probe_skip_adc 1' \
+      -c "source $ROOT/scripts/board_probe.tcl" -c 'exit' >"$PROBE_LOG"
+  ADC_FW=$(read_words "$(sym_addr g_motor_adc_raw)" 2 | tr '\n' ' ')
+else
+  ocd -c 'init' -c "source $ROOT/scripts/board_probe.tcl" -c 'exit' >"$PROBE_LOG"
+  ADC_FW=""
+fi
 BUS_I=$(read_i)
 
-RUNNING="$RUNNING" BUS_I="$BUS_I" python3 - "$PROBE_LOG" <<'PY'
+RUNNING="$RUNNING" BUS_I="$BUS_I" ADC_FW="$ADC_FW" python3 - "$PROBE_LOG" <<'PY'
 import os
 import statistics
 import sys
@@ -38,6 +54,7 @@ except ValueError:
 tim1 = gpioa = gpiob = None
 adc: dict[int, list[int]] = {}
 cal = None
+skip_adc = False
 
 for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     f = line.split()
@@ -53,21 +70,19 @@ for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
         adc.setdefault(int(f[1]), []).append(int(f[2]))
     elif f[0] == "CAL":
         cal = [int(x) for x in f[1:4]]
+    elif f[0] == "SKIPADC":
+        skip_adc = True
     elif f[0] == "TIMEOUT":
         print(f"probe timeout: {line.strip()}", file=sys.stderr)
 
-if not (tim1 and gpioa and gpiob is not None and cal and len(adc) >= 8):
+if not (tim1 and gpioa and gpiob is not None):
     print("probe output incomplete; is the target powered and the probe attached?",
           file=sys.stderr)
     sys.exit(1)
-
-ts_cal1, vref_cal, ts_cal2 = cal
-med = {ch: statistics.median(v) for ch, v in adc.items()}
-spread = {ch: max(v) - min(v) for ch, v in adc.items()}
-
-vdda = 3.3 * vref_cal / med[17]
-lsb_ma = vdda / 4096 / (50 * 0.010) * 1000     # INA240A2 gain 50, 10 mOhm shunt
-volts = lambda ch: vdda * med[ch] / 4095
+if not skip_adc and not (cal and len(adc) >= 8):
+    print("probe ADC incomplete; is the target powered and the probe attached?",
+          file=sys.stderr)
+    sys.exit(1)
 
 cr1, ccer, bdtr, sr = tim1
 moder_a, idr_a = gpioa
@@ -77,22 +92,48 @@ cp_mode = (moder_a >> 22) & 3
 cp_level = (idr_a >> 11) & 1
 hall = [(gpiob >> b) & 1 for b in (3, 4, 5)]
 
-vbus = volts(4) * 4.9
-vboost = volts(5) * 7.8
-r_ntc = 10000 * (vdda / volts(0) - 1)
-ts = med[16] * vdda / 3.3
-die_c = 30 + (ts - ts_cal1) * 80 / (ts_cal2 - ts_cal1)
-
-import math
-ntc_c = 1 / (1 / 298.15 + math.log(r_ntc / 10000) / 3435) - 273.15
-
-print(f"VDDA            {vdda:.4f} V        (VREFINT {med[17]:.0f}, cal {vref_cal})")
-print(f"current LSB     {lsb_ma:.3f} mA/LSB")
-print(f"bus  (PA4)      {vbus:.2f} V")
-print(f"V_BOOST (PA5)   {vboost:.2f} V")
-print(f"bus current     {bus_i:.3f} A         (UT61E, in series with the supply)")
-print(f"board NTC       {ntc_c:.1f} C          ({r_ntc:.0f} ohm)")
-print(f"die temp        {die_c:.1f} C")
+if skip_adc:
+    words = [int(x, 16) for x in os.environ.get("ADC_FW", "").split() if x]
+    if len(words) < 2:
+        print("g_motor_adc_raw unreadable; firmware ADC DMA is the running-mode source",
+              file=sys.stderr)
+        sys.exit(1)
+    iu, iv = words[0] & 0xFFFF, (words[0] >> 16) & 0xFFFF
+    iw, vbus_raw = words[1] & 0xFFFF, (words[1] >> 16) & 0xFFFF
+    vdda = 3.31
+    lsb_ma = vdda / 4096 / (50 * 0.010) * 1000
+    vbus = vbus_raw / 4095 * vdda * 4.9
+    vboost = float("nan")
+    med = {1: iu, 2: iv, 3: iw, 4: vbus_raw}
+    spread = {1: 0, 2: 0, 3: 0}
+    print(f"VDDA            {vdda:.2f} V        (nominal; ADC1 left to firmware)")
+    print(f"current LSB     {lsb_ma:.3f} mA/LSB")
+    print(f"bus  (PA4)      {vbus:.2f} V        (g_motor_adc_raw)")
+    print(f"V_BOOST (PA5)   n/a             (not in the control sequence)")
+    print(f"bus current     {bus_i:.3f} A         (UT61E, in series with the supply)")
+    print("board NTC       n/a")
+    print("die temp        n/a")
+else:
+    ts_cal1, vref_cal, ts_cal2 = cal
+    med = {ch: statistics.median(v) for ch, v in adc.items()}
+    spread = {ch: max(v) - min(v) for ch, v in adc.items()}
+    vdda = 3.3 * vref_cal / med[17]
+    lsb_ma = vdda / 4096 / (50 * 0.010) * 1000
+    volts = lambda ch: vdda * med[ch] / 4095
+    vbus = volts(4) * 4.9
+    vboost = volts(5) * 7.8
+    r_ntc = 10000 * (vdda / volts(0) - 1)
+    ts = med[16] * vdda / 3.3
+    die_c = 30 + (ts - ts_cal1) * 80 / (ts_cal2 - ts_cal1)
+    import math
+    ntc_c = 1 / (1 / 298.15 + math.log(r_ntc / 10000) / 3435) - 273.15
+    print(f"VDDA            {vdda:.4f} V        (VREFINT {med[17]:.0f}, cal {vref_cal})")
+    print(f"current LSB     {lsb_ma:.3f} mA/LSB")
+    print(f"bus  (PA4)      {vbus:.2f} V")
+    print(f"V_BOOST (PA5)   {vboost:.2f} V")
+    print(f"bus current     {bus_i:.3f} A         (UT61E, in series with the supply)")
+    print(f"board NTC       {ntc_c:.1f} C          ({r_ntc:.0f} ohm)")
+    print(f"die temp        {die_c:.1f} C")
 print(f"TIM1            CR1=0x{cr1:04x} CCER=0x{ccer:04x} BDTR=0x{bdtr:04x} "
       f"MOE={(bdtr >> 15) & 1} BKE={(bdtr >> 12) & 1} BIF={(sr >> 7) & 1}")
 comparators_live = vbus >= 10.5
@@ -115,11 +156,23 @@ if not 10.5 <= vbus <= 13.0:
     fails.append(f"bus {vbus:.2f} V outside 10.5..13.0 -- with 12 V absent the "
                  f"LM339 window comparators are unpowered, so nFAULT/nOTEMP "
                  f"reading high proves nothing")
-if vboost > 14.0:
-    fails.append(f"V_BOOST {vboost:.2f} V - charge pump is running, and the "
-                 f"half-bridge boards have no HB-HS clamp (spec 9.5.4)")
-if not 10.0 <= vboost <= 14.0:
-    fails.append(f"V_BOOST {vboost:.2f} V outside 10.0..14.0")
+if not skip_adc:
+    if vboost > 14.0:
+        fails.append(f"V_BOOST {vboost:.2f} V - charge pump is running, and the "
+                     f"half-bridge boards have no HB-HS clamp (spec 9.5.4)")
+    if not 10.0 <= vboost <= 14.0:
+        fails.append(f"V_BOOST {vboost:.2f} V outside 10.0..14.0")
+bkin_af = (moder_a >> 12) & 3
+bke = (bdtr >> 12) & 1
+bif = (sr >> 7) & 1
+if bkin_af != 2:
+    fails.append(f"PA6 mode={bkin_af} (want AF=2 TIM1_BKIN); a GPIO/floating "
+                 f"BKIN with BKP=low is what locked MOE last time")
+if bke == 0:
+    fails.append("BKE=0: TIM1 BKIN is disarmed. Hardware nFAULT is ignored. "
+                 "Reflash with MOTOR_PWM_BKIN=ON; do not run PWM without it")
+if bif != 0:
+    fails.append("BIF set: a break latched MOE off")
 if nfault == 0:
     fails.append("nFAULT low: overcurrent comparator tripped, or JP2/threshold "
                  "wrong. Enabling BKIN in this state latches MOE off")
@@ -150,3 +203,4 @@ if fails:
     sys.exit(1)
 print("PASS" + (" (running mode: standstill gates skipped)" if running else ""))
 PY
+_board_ok=1

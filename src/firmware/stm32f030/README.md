@@ -58,7 +58,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 | `MOTOR_ANGLE` | Hall 连续电角度（默认 ON） |
 | `MOTOR_ANGLE_OFFSET_Q16` / `MOTOR_ANGLE_ANCHOR_TRIM` | 角度标定结果（65536/电周期），阶段 E 用 `id` 测定，默认全零 |
 | `MOTOR_ADC` | PWM 同步的相电流 + 母线电压采样（默认 ON） |
-| `MOTOR_ADC_LEAD_COUNTS` | ADC 序列比计数峰值提前多少计数（默认 336 = 7 µs）。duty 超过约 67% 要减小它 |
+| `MOTOR_ADC_LEAD_COUNTS` | ADC 序列比计数峰值提前多少计数（默认 168 = 3.5 µs，序列跨在峰值两侧）。336 在 vq 5.0 V 的高 duty 下会让 i0 偏到 −36 mA |
 | `MOTOR_ADC_STROBE` | 在 ADC 序列结束时脉冲 TP1，供示波器验证采样点（默认 **OFF**）。它的沿会在 ISENSE 上耦合出百 mV 级尖峰，只在示波器会话里开 |
 | `MOTOR_TRACE` | 逐拍采样缓冲（默认 ON，约 2 KB RAM） |
 | `MOTOR_TRACE_DEPTH` / `MOTOR_TRACE_DECIM` | 缓冲深度 / 每 N 拍存一次（默认 256 / 1） |
@@ -69,6 +69,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 | `MOTOR_DUTY_PCT` / `MOTOR_PULSE_COUNTS` | 开环 duty 百分比 / 直接给 CCR 计数 |
 | `MOTOR_STEP_MS` / `MOTOR_PHASE_OFFSET` | 开环换相周期（0 = 静态保持不换相）/ 相位偏移 |
 | `MOTOR_HS_ONLY` | 诊断：只驱动高边，不开同臂低边 |
+| `MOTOR_PWM_BKIN` | TIM1 BKIN 接 nFAULT_MCU（JP2），默认 **ON**。关掉等于没有硬件过流 |
 
 **注意**：这些是 cmake cache 变量，复用旧 build 目录会残留上次的值。切换参数组时先 `rm -rf build/Release`，或显式传全部相关选项。
 
@@ -124,5 +125,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 5. **换向必须换驱动表，不能只移相。** `s_seq_ccw` 是 `s_seq_cw` 关于索引 0 的反序，所以「按 ccw 表映射」等价于「偏移 −p」；而 6 元循环里 `−p ≡ p` 恰好发生在 **p=0 和 p=3**——而这两个又是唯一高效的偏移（约 60 mA；±60° 的 p=1/2/4/5 要 0.25 A）。结果就是只靠 `direction` 位在 p=0/3 上完全无效。真正的换向是把 **PWM 相与 LOW 相互换**（`hall6_lookup()` 的 `reverse` 分支、`ol_lookup_step()` 的 ccw 分支），力矩反向而幅值不变。
 5. **半桥板 VOUT 对地的滤波电容必须拆掉。** 那块板按 buck 输出级设计，VOUT 上的电容会被高边充、低边放，形成一条约 96 mΩ 的通路吃掉约 1.5 A（∝ 导通时间、与死区无关、与电机是否接入无关），电机只能吃残羹。拆掉后母线电流降约 80~100 倍，并从「线性 ∝ 导通时间」变为「平方 ∝ duty²」的正常电机特性。
 6. **`MotorApp_Start()` 等 SWD 调用不可靠**（gdb `call` 返回正常但外设状态常对不上），实测验证请用 `MOTOR_AUTO_START` 烧录后 reset 的路径。另外 OpenOCD `program ... reset` 会在 `Reset_Handler` 留断点，测量前必须 `rbp all` + `resume`，否则 CPU 根本没跑到 `main`。
+7. **分流是低边、PWM 同步采样的。** 该相下管导通时才有数。边沿直通、V_BOOST 漏电都绕开三个采样电阻：相电流可以看起来正常（或全 0），母线电流却很大。窗口比较器看得到这类电流，ADC 看不到。不要因为分流读 0 就关 `MOTOR_PWM_BKIN`。
+8. **`park_off = +23°` 不是磁链偏角。** 它对着旧插值器 `FocThetaInterp − FocTheta` 的均值 −23°。插值器已按扇区居中（dth 均值约 0），残差写在 `FX_PARK_OFF_Q16 = 1274`（+7°）。不要写进 `MOTOR_ANGLE_OFFSET_Q16`，也不要再写负的 `park_off`。
 
 I²C 从机 / TNB 寄存器：待 `shared/tnb` 与 `App/motor_node.c` 后续添加。

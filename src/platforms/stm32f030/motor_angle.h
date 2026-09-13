@@ -43,7 +43,18 @@
  * one.
  */
 #ifndef MOTOR_ANGLE_OFFSET_Q16
-#define MOTOR_ANGLE_OFFSET_Q16 0
+/* Left at 0. After moving the tick to ADC DMA TC (2026-08-27) the
+ * shunts show the hall-synchronous current. 2 s acc at OFFSET=0:
+ *   stair  CW (id,iq)=(+0.3,+298) mA   CCW (+7.9,−269) mA
+ *   interp CW (+148,+250)              CCW (−108,−235)
+ * Staircase id ≈ 0 and iq flips with the torque sign, so the anchors
+ * already sit on the 6-step voltage. The interpolated ~−29° is the
+ * mean of a 60° sweep of that same vector, not an alignment error.
+ * Do not write −5243. Do not write +4190 (+23 deg) here either: that
+ * number cancelled MotorHall6_FocThetaInterp lag, a different angle
+ * path. CURRENT Park uses hall6 FocTheta, not these anchors.
+ * Do not close the current loop on TRIM yet. */
+#define MOTOR_ANGLE_OFFSET_Q16 (0)
 #endif
 
 #ifndef MOTOR_ANGLE_ANCHOR_TRIM
@@ -77,7 +88,16 @@ extern volatile motor_angle_state_t g_motor_angle;
 
 void MotorAngle_Reset(void);
 
+/* While FOC is producing torque, electrical direction must follow the
+ * commanded iq, not the last hall edge. A single reverse edge is chatter
+ * at a boundary (the 0.3 A close sat there and jittered). 0 = follow edges. */
+void MotorAngle_SetDirHint(int8_t dir);
+
 /* Call once per control tick with the raw hall code. */
 void MotorAngle_Update(uint8_t hall);
+
+/* Current sector's anchor (uniform 60° + TRIM + OFFSET). Holds still
+ * between edges; used to Park 6-step current as a DC vector. */
+uint16_t MotorAngle_SectorAnchor(void);
 
 #endif /* MOTOR_ANGLE_H */

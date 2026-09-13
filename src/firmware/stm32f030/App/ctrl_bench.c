@@ -15,9 +15,11 @@
 #endif
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
 #include "motor_foc.h"
+#include "motor_foc_fx.h"
 #endif
 
 volatile MotorCtrlBenchResult g_ctrl_bench;
+volatile MotorFocFxCmp g_foc_fx_cmp;
 
 /* Sinks so the optimiser cannot delete the work being timed. */
 static volatile int32_t s_sink;
@@ -103,6 +105,79 @@ static void bench_foc_step(void)
   }
 #endif
 }
+
+static void bench_foc_fx_step(void)
+{
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  MotorFocFx_Step();
+#endif
+}
+
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+static int32_t iabs32(int32_t x)
+{
+  return (x < 0) ? -x : x;
+}
+
+static void foc_fx_compare(void)
+{
+  static const uint16_t adc_iu[MOTOR_FOC_FX_CMP_N] =
+      {2048U, 2814U, 2814U, 2814U, 2814U, 1282U, 2300U, 2048U};
+  static const uint16_t adc_iv[MOTOR_FOC_FX_CMP_N] =
+      {2048U, 1282U, 1282U, 1282U, 1282U, 2814U, 2300U, 2814U};
+  static const uint16_t adc_iw[MOTOR_FOC_FX_CMP_N] =
+      {2048U, 2048U, 2048U, 2048U, 2048U, 2048U, 1544U, 1282U};
+  static const uint16_t theta[MOTOR_FOC_FX_CMP_N] =
+      {0U, 0U, 8192U, 16384U, 40000U, 8192U, 24576U, 49152U};
+  uint8_t i;
+
+  g_foc_fx_cmp.tag = 0U;
+  g_foc_fx_cmp.nfail = 0U;
+
+  MotorFoc_Init();
+  MotorFoc_SetMode(MOTOR_FOC_OBSERVE);
+  MotorFocFx_Init();
+  MotorFocFx_SetMode(MOTOR_FOC_FX_OBSERVE);
+
+  for (i = 0U; i < MOTOR_FOC_FX_CMP_N; i++)
+  {
+    int32_t id_x_ma;
+    int32_t iq_x_ma;
+    int32_t d_id;
+    int32_t d_iq;
+
+    g_motor_adc_raw[0] = adc_iu[i];
+    g_motor_adc_raw[1] = adc_iv[i];
+    g_motor_adc_raw[2] = adc_iw[i];
+    g_motor_adc_raw[3] = 3024U;
+    g_motor_angle.theta = theta[i];
+
+    MotorFoc_Step();
+    MotorFocFx_Step();
+
+    id_x_ma = (g_motor_foc_fx.id_lsb * 1617) / 1000;
+    iq_x_ma = (g_motor_foc_fx.iq_lsb * 1617) / 1000;
+    d_id = id_x_ma - (int32_t)g_motor_foc.id_ma;
+    d_iq = iq_x_ma - (int32_t)g_motor_foc.iq_ma;
+
+    g_foc_fx_cmp.id_f_ma[i] = (int32_t)g_motor_foc.id_ma;
+    g_foc_fx_cmp.iq_f_ma[i] = (int32_t)g_motor_foc.iq_ma;
+    g_foc_fx_cmp.id_x_ma[i] = id_x_ma;
+    g_foc_fx_cmp.iq_x_ma[i] = iq_x_ma;
+    g_foc_fx_cmp.d_id_ma[i] = d_id;
+    g_foc_fx_cmp.d_iq_ma[i] = d_iq;
+
+    if ((iabs32(d_id) > 4) || (iabs32(d_iq) > 4))
+    {
+      g_foc_fx_cmp.nfail++;
+    }
+  }
+
+  MotorFoc_SetMode(MOTOR_FOC_OFF);
+  MotorFocFx_SetMode(MOTOR_FOC_FX_OFF);
+  g_foc_fx_cmp.tag = MOTOR_FOC_FX_CMP_TAG;
+}
+#endif
 
 static uint32_t median_u16(uint16_t *v, uint8_t count)
 {
@@ -197,8 +272,18 @@ void MotorCtrlBench_Run(void)
   MotorFoc_SetMode(MOTOR_FOC_CURRENT);
   bench_case(MOTOR_CTRL_BENCH_FOC_STEP, bench_foc_step);
   MotorFoc_SetMode(MOTOR_FOC_OFF);
-  /* SetDuties enabled the output-compare bits on the way through; leave the
-   * timer as the pre-flight check expects to find it. */
+
+  /* 500 mA / 1.617 mA per LSB = 309 LSB. */
+  MotorFocFx_Init();
+  MotorFocFx_SetIqRefLsb(309);
+  MotorFocFx_SetMode(MOTOR_FOC_FX_CURRENT);
+  bench_case(MOTOR_CTRL_BENCH_FOC_FX_STEP, bench_foc_fx_step);
+  MotorFocFx_SetMode(MOTOR_FOC_FX_OFF);
+
+  foc_fx_compare();
+
+  /* SetDuties / SetDutiesCcr enabled the output-compare bits on the way
+   * through; leave the timer as the pre-flight check expects to find it. */
   MotorPwm_HardwareSafe();
 #endif
 

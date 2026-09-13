@@ -18,9 +18,10 @@
  *
  * Trigger chain: TIM1 CH4 in PWM2 mode produces exactly one OC4REF rising edge
  * per PWM period, as the counter passes CCR4 on the way up. CCR4 is placed
- * MOTOR_ADC_LEAD_US before the peak so the conversions finish by the time the
- * control ISR runs. OC4REF drives TRGO, which triggers the ADC. CC4E stays off,
- * so PA11 remains a plain GPIO held low for the charge pump.
+ * MOTOR_ADC_LEAD_COUNTS before the peak so the four conversions finish just
+ * before the peak; DMA TC then runs the control ISR on those samples (roadmap
+ * 4.1). OC4REF drives TRGO, which triggers the ADC. CC4E stays off, so PA11
+ * remains a plain GPIO held low for the charge pump.
  *
  * The conversions are sequential (F030 has one ADC and no injected group), so
  * the three phases are sampled 1.67 us apart. With L/R = 673 us the current
@@ -37,13 +38,22 @@ enum
   MOTOR_ADC_VBUS = 3U  /* PA4, ADC_IN4 */
 };
 
-/* Counts before the peak at which the sequence starts. 48 MHz timer clock, so
- * 336 counts = 7 us: four conversions at 1.67 us each finish just before the
- * peak. The low-side conduction half-window is (1236 - CCR) counts, so a 7 us
- * lead holds up to about 70% duty; above that this must shrink, at the cost of
- * the samples being taken further from the peak. */
+/* Counts before the peak at which the sequence starts. 48 MHz timer clock.
+ * Four conversions take 6.7 us. At vq 5.0 V the low-side window still
+ * fits a 168-count (3.5 us) lead. At vq 6.2 V the window shrinks to
+ * ~99 counts, so 168 starts before all three lows conduct and i0 walks
+ * to −27 mA (2026-09-13). 72 counts = 1.5 us sits inside that window.
+ *
+ * Empty-load i0 (iu+iv+iw)/3, id_ref 0:
+ *   vq 5.0 V (2026-09-11)
+ *     lead   120    168    176    224    336    504
+ *     i0    +2.7   +1.6   +1.5   +0.5  -35.7  -76.0  mA
+ *   vq 6.2 V dir0 (2026-09-13)
+ *     lead    36     48     72     96    144    168
+ *     i0   -11.9   -9.9   -9.0  -12.7  -23.1  -27.3  mA
+ * Floor ~−9 mA at 48–72 is leftover stagger/offset, not the knee. */
 #ifndef MOTOR_ADC_LEAD_COUNTS
-#define MOTOR_ADC_LEAD_COUNTS 336U
+#define MOTOR_ADC_LEAD_COUNTS 72U
 #endif
 
 /* DMA target. Index order follows the channel numbers because the F030 scans
@@ -54,18 +64,10 @@ void MotorAdc_Init(void);
 int  MotorAdc_Start(void);
 void MotorAdc_Stop(void);
 
-#if defined(MOTOR_ADC_STROBE) && (MOTOR_ADC_STROBE != 0)
-/*
- * Pulses TP_CYCLE (PA15, TP1) when the conversion sequence completes, so a scope
- * can show where sampling lands relative to the low-side conduction window --
- * the one stage C acceptance item that cannot be checked from the target alone.
- * The sequence started MOTOR_ADC_CH_COUNT * 1.67 us before the pulse and the
- * counter peak is roughly MOTOR_ADC_LEAD_COUNTS/48 us after its start.
- *
- * Costs one interrupt per PWM period, so it is opt-in rather than always on.
- */
+/* DMA TC is the control-tick source (MotorTick_Start / Stop). */
+void MotorAdc_EnableTick(void);
+void MotorAdc_DisableTick(void);
 void MotorAdc_DmaIrq(void);
-#endif
 
 /* Zero-current code is 2048 by construction: the INA240 mid-rail reference is
  * divided from the same +3V3A that is the ADC reference, so it tracks. Do not

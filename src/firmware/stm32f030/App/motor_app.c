@@ -14,8 +14,12 @@
 #endif
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
 #include "motor_foc.h"
+#include "motor_foc_fx.h"
 #ifndef MOTOR_FOC_IQ_MA
 #define MOTOR_FOC_IQ_MA 300
+#endif
+#ifndef MOTOR_FOC_OBS_DECIM
+#define MOTOR_FOC_OBS_DECIM 20U
 #endif
 #endif
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
@@ -68,6 +72,7 @@ void MotorApp_Init(void)
 #endif
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
   MotorFoc_Init();
+  MotorFocFx_Init();
 #endif
   MotorApp_ApplyDefaults();
 }
@@ -85,6 +90,10 @@ int MotorApp_Start(void)
 
 void MotorApp_Stop(void)
 {
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  MotorFocFx_SetMode(MOTOR_FOC_FX_OFF);
+  MotorFoc_SetMode(MOTOR_FOC_OFF);
+#endif
   (void)MotorHall6_Enable(0);
   (void)MotorOpenloop_Enable(0);
   MotorPwm_Stop();
@@ -180,9 +189,13 @@ __attribute__((used)) void MotorApp_DiagStop(void)
 int MotorApp_StartFocObserve(void)
 {
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
-  MotorTrace_Arm(MOTOR_TRACE_MODE_WRAP, MOTOR_TRACE_SRC_FOC, MOTOR_TRACE_DECIM);
+  /* decim 20 at 20 kHz covers ~256 ms, about 6 electrical revolutions at the
+   * hall6 20% point (24 rev/s). One electrical period at 20 kHz / decim 1 is
+   * only 12.8 ms of the 256-sample buffer -- too short to see period-6. */
+  MotorTrace_Arm(MOTOR_TRACE_MODE_WRAP, MOTOR_TRACE_SRC_FOC, MOTOR_FOC_OBS_DECIM);
 #endif
   MotorFoc_SetMode(MOTOR_FOC_OBSERVE);
+  MotorFocFx_SetMode(MOTOR_FOC_FX_OBSERVE);
   return MotorHall6_Enable(1);
 }
 

@@ -1,5 +1,6 @@
 #include "motor_adc.h"
 #include "motor_pwm.h"
+#include "motor_tick.h"
 #include "board_pins.h"
 #include "main.h"
 
@@ -131,37 +132,58 @@ void MotorAdc_Init(void)
     gpio.Speed = GPIO_SPEED_FREQ_HIGH;
     HAL_GPIO_Init(BOARD_TP_CYCLE_PORT, &gpio);
     HAL_GPIO_WritePin(BOARD_TP_CYCLE_PORT, BOARD_TP_CYCLE_PIN, GPIO_PIN_RESET);
-
-    HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 1, 0);
-    HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
   }
 #endif
+
+  /* Same priority as TIM1: the control tick lives here, not on update. */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
 
   s_ready = 1U;
 }
 
-#if defined(MOTOR_ADC_STROBE) && (MOTOR_ADC_STROBE != 0)
+void MotorAdc_EnableTick(void)
+{
+  DMA1->IFCR = DMA_IFCR_CTCIF1 | DMA_IFCR_CHTIF1 | DMA_IFCR_CTEIF1;
+  DMA1_Channel1->CCR &= ~DMA_CCR_HTIE;
+  DMA1_Channel1->CCR |= DMA_CCR_TCIE;
+}
+
+void MotorAdc_DisableTick(void)
+{
+  DMA1_Channel1->CCR &= ~DMA_CCR_TCIE;
+}
+
 void MotorAdc_DmaIrq(void)
 {
-  HAL_DMA_IRQHandler(&s_hdma);
-}
+  uint32_t isr = DMA1->ISR;
 
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
-{
-  if (hadc->Instance != ADC1)
+  if ((isr & DMA_ISR_TCIF1) != 0U)
   {
-    return;
-  }
-
-  /* About 0.7 us wide: long enough to see on a basic scope at 1 us/div, short
-   * enough to be nowhere near the next sequence 50 us later. */
-  BOARD_TP_CYCLE_PORT->BSRR = BOARD_TP_CYCLE_PIN;
-  for (volatile uint32_t n = 0U; n < 4U; n++)
-  {
-  }
-  BOARD_TP_CYCLE_PORT->BRR = BOARD_TP_CYCLE_PIN;
-}
+    DMA1->IFCR = DMA_IFCR_CTCIF1;
+#if defined(MOTOR_ADC_STROBE) && (MOTOR_ADC_STROBE != 0)
+    /* Pulse first: it marks sample end, and the edges must not sit in the
+     * next sequence (measurement-validity 3.9). */
+    BOARD_TP_CYCLE_PORT->BSRR = BOARD_TP_CYCLE_PIN;
+    {
+      volatile uint32_t n;
+      for (n = 0U; n < 4U; n++)
+      {
+      }
+    }
+    BOARD_TP_CYCLE_PORT->BRR = BOARD_TP_CYCLE_PIN;
 #endif
+    MotorTick_OnAdcComplete();
+  }
+  if ((isr & DMA_ISR_HTIF1) != 0U)
+  {
+    DMA1->IFCR = DMA_IFCR_CHTIF1;
+  }
+  if ((isr & DMA_ISR_TEIF1) != 0U)
+  {
+    DMA1->IFCR = DMA_IFCR_CTEIF1;
+  }
+}
 
 int MotorAdc_Start(void)
 {
@@ -175,6 +197,9 @@ int MotorAdc_Start(void)
   {
     return 0;
   }
+  /* HAL_DMA_Start_IT also arms HT; one sequence must make one tick. TCIE
+   * stays off until MotorTick_Start so init does not run the controller. */
+  DMA1_Channel1->CCR &= ~(DMA_CCR_HTIE | DMA_CCR_TCIE);
   return 1;
 }
 

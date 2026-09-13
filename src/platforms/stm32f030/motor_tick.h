@@ -10,5 +10,6 @@ void MotorTick_Init(void);
 void MotorTick_Start(void);
 void MotorTick_Stop(void);
 void MotorTick_OnTim1Update(void);
+void MotorTick_OnAdcComplete(void);
 
 #endif /* MOTOR_TICK_H */

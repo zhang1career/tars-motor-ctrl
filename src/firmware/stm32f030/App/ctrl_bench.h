@@ -16,9 +16,11 @@
  * Budget for reference: 20 kHz on a 48 MHz M0 is 2400 cycles per tick.
  */
 
-#define MOTOR_CTRL_BENCH_CASES 6U
+#define MOTOR_CTRL_BENCH_CASES 7U
 #define MOTOR_CTRL_BENCH_RUNS 16U
 #define MOTOR_CTRL_BENCH_DONE_TAG 0xC7B00001U
+#define MOTOR_FOC_FX_CMP_N 8U
+#define MOTOR_FOC_FX_CMP_TAG 0xF0C0C0DEU
 
 enum
 {
@@ -31,8 +33,22 @@ enum
    * write. Includes MOTOR_FOC_DECIM-1 early returns of a few cycles each. */
   MOTOR_CTRL_BENCH_FOC_STEP = 4U,
   /* 100 chained float multiplies: the measured cost of soft float here. */
-  MOTOR_CTRL_BENCH_FMUL100 = 5U
+  MOTOR_CTRL_BENCH_FMUL100 = 5U,
+  /* Fixed-point FOC, one MotorFocFx_Step in closed-current mode. */
+  MOTOR_CTRL_BENCH_FOC_FX_STEP = 6U
 };
+
+typedef struct
+{
+  uint32_t tag;
+  uint32_t nfail;
+  int32_t d_id_ma[MOTOR_FOC_FX_CMP_N];
+  int32_t d_iq_ma[MOTOR_FOC_FX_CMP_N];
+  int32_t id_f_ma[MOTOR_FOC_FX_CMP_N];
+  int32_t iq_f_ma[MOTOR_FOC_FX_CMP_N];
+  int32_t id_x_ma[MOTOR_FOC_FX_CMP_N];
+  int32_t iq_x_ma[MOTOR_FOC_FX_CMP_N];
+} MotorFocFxCmp;
 
 typedef struct
 {
@@ -45,6 +61,7 @@ typedef struct
 } MotorCtrlBenchResult;
 
 extern volatile MotorCtrlBenchResult g_ctrl_bench;
+extern volatile MotorFocFxCmp g_foc_fx_cmp;
 
 void MotorCtrlBench_Run(void);
 

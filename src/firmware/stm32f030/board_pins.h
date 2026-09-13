@@ -24,9 +24,11 @@
 #define BOARD_PWM_W_L_PORT     GPIOB
 
 /* ---- Fault inputs (LM339 open-drain wired-OR, 4k7 pull-up to +3V3) ---- */
-#define BOARD_NFAULT_PIN       GPIO_PIN_6   /* PA6  TIM1_BKIN ← overcurrent window
-                                             * comparator, via JP2. Low = fault. */
+#define BOARD_NFAULT_PIN       GPIO_PIN_6   /* PA6  TIM1_BKIN ← window comparator
+                                             * (overcurrent), via JP2. Low = fault. */
 #define BOARD_NFAULT_PORT      GPIOA
+#define BOARD_PWM_BKIN_PIN     BOARD_NFAULT_PIN
+#define BOARD_PWM_BKIN_PORT    BOARD_NFAULT_PORT
 
 #define BOARD_NOTEMP_PIN       GPIO_PIN_12  /* PA12 ← remote-NTC comparators, TP5.
                                              * Also OR'd into nFAULT through D5, so

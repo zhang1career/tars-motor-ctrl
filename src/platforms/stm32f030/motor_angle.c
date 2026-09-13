@@ -33,6 +33,7 @@ static const int16_t s_anchor_trim[MOTOR_ANGLE_SECTORS] = MOTOR_ANGLE_ANCHOR_TRI
  * *this* sector predicts far better than the sector just left: predicting from
  * the neighbour gives edge jumps up to 15 degrees, this gives about 1. */
 static uint16_t s_sector_ticks[MOTOR_ANGLE_SECTORS];
+static int8_t s_dir_hint;
 
 void MotorAngle_Reset(void)
 {
@@ -43,6 +44,7 @@ void MotorAngle_Reset(void)
     s_sector_ticks[i] = 0U;
   }
 
+  s_dir_hint = 0;
   g_motor_angle.theta = 0U;
   g_motor_angle.omega_q8 = 0;
   g_motor_angle.ticks_in_sector = 0U;
@@ -53,6 +55,22 @@ void MotorAngle_Reset(void)
   g_motor_angle.edge_jump = 0U;
   g_motor_angle.bad_edges = 0U;
   g_motor_angle.edges = 0U;
+}
+
+void MotorAngle_SetDirHint(int8_t dir)
+{
+  if (dir > 0)
+  {
+    s_dir_hint = 1;
+  }
+  else if (dir < 0)
+  {
+    s_dir_hint = -1;
+  }
+  else
+  {
+    s_dir_hint = 0;
+  }
 }
 
 static uint16_t angle_anchor(uint8_t sector)
@@ -98,16 +116,22 @@ static void angle_on_edge(uint8_t sector)
   }
   else
   {
-    /* Two or more sectors at once cannot happen at any speed this loop can
-     * follow: a sector is at least 16 ticks even at 3000 rpm. So this is a
-     * missed edge or a glitch -- record it and resynchronise to the anchor
-     * rather than extrapolating from a bogus interval. */
+    /* Missed edge or glitch. Snap to the new anchor but keep omega and
+     * dir: zeroing them freezes Park on a locked vector, which is how
+     * the first current-loop close jittered in one sector. */
     g_motor_angle.bad_edges++;
     g_motor_angle.sector = sector;
     g_motor_angle.theta = angle_anchor(sector);
     g_motor_angle.ticks_in_sector = 0U;
-    g_motor_angle.omega_q8 = 0;
-    g_motor_angle.dir = 0;
+    return;
+  }
+
+  if ((s_dir_hint != 0) && (dir != s_dir_hint))
+  {
+    g_motor_angle.sector = sector;
+    g_motor_angle.theta = angle_anchor(sector);
+    g_motor_angle.ticks_in_sector = 0U;
+    g_motor_angle.dir = s_dir_hint;
     return;
   }
 
@@ -148,6 +172,17 @@ static void angle_on_edge(uint8_t sector)
   g_motor_angle.theta = edge_angle;
   g_motor_angle.ticks_in_sector = 0U;
   g_motor_angle.valid = 1U;
+}
+
+uint16_t MotorAngle_SectorAnchor(void)
+{
+  uint8_t s = g_motor_angle.sector;
+
+  if (s >= MOTOR_ANGLE_SECTORS)
+  {
+    return g_motor_angle.theta;
+  }
+  return angle_anchor(s);
 }
 
 void MotorAngle_Update(uint8_t hall)

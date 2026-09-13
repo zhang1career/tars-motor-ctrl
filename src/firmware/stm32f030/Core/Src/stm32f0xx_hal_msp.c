@@ -52,14 +52,18 @@ void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef *htim)
     HAL_GPIO_Init(BOARD_CP_DRIVE_PORT, &gpio);
     HAL_GPIO_WritePin(BOARD_CP_DRIVE_PORT, BOARD_CP_DRIVE_PIN, GPIO_PIN_RESET);
 
-    /* Fault lines: both are open-drain wired-OR with a 4k7 pull-up on the
-     * board, so read them without an internal pull-up -- a missing external
-     * pull-up should look wrong rather than be masked. */
+    /* nFAULT is TIM1_BKIN (AF2 on PA6). IDR still reads the pin, so
+     * board_check can see the comparator. No internal pull-up: a missing
+     * board 4k7 must look like a fault, not be masked. nOTEMP stays GPIO. */
+    gpio.Mode = GPIO_MODE_AF_PP;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    gpio.Alternate = GPIO_AF2_TIM1;
+    gpio.Pin = BOARD_PWM_BKIN_PIN;
+    HAL_GPIO_Init(BOARD_PWM_BKIN_PORT, &gpio);
+
     gpio.Mode = GPIO_MODE_INPUT;
     gpio.Pull = GPIO_NOPULL;
-    gpio.Pin = BOARD_NFAULT_PIN;
-    HAL_GPIO_Init(BOARD_NFAULT_PORT, &gpio);
-
     gpio.Pin = BOARD_NOTEMP_PIN;
     HAL_GPIO_Init(BOARD_NOTEMP_PORT, &gpio);
 

@@ -13,6 +13,7 @@
 #endif
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
 #include "motor_foc.h"
+#include "motor_foc_fx.h"
 #endif
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
 #include "motor_adc.h"
@@ -29,6 +30,13 @@ volatile uint8_t g_motor_tick_dir;
 
 static void motor_tick_dispatch(void)
 {
+  /* Before any PWM write: hardware BKIN already dropped MOE, and the
+   * software limit must do the same on this tick's samples. */
+  MotorPwm_PollProtect();
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  MotorFocFx_Handover();
+#endif
+
 #if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
   /* Before the controller, so stage E can consume the angle in the same tick.
    * Reads the halls itself rather than borrowing hall6's copy, so FOC does not
@@ -45,17 +53,19 @@ static void motor_tick_dispatch(void)
     MotorOpenloop_ControlLoopISR();
   }
 
-  /* The float FOC deliberately does NOT run here -- 16173 cycles against a
-   * 2400-cycle tick would overrun and drop the following ticks. It runs in the
-   * background loop; the fixed-point implementation is what belongs in the ISR.
-   */
+  /* Fixed-point FOC belongs here: 1109 cycles, which fits the 2400-cycle tick
+   * even on a hall edge (roadmap 3.3.2). OBSERVE computes id/iq and writes
+   * nothing. CURRENT is armed only by MotorFocFx_Handover after the rotor
+   * is already spinning. The float MotorFoc_Step stays in the background
+   * loop as the numerical reference -- it cannot live in this ISR. */
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  MotorFocFx_Step();
+#endif
 
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
   if (g_motor_trace.source == MOTOR_TRACE_SRC_ADC)
   {
-    g_motor_tick_dir =
-        ((htim1.Instance->CR1 & TIM_CR1_DIR) != 0U) ? 1U : 0U;
     MotorTrace_Push(MotorAdc_ShuntLsb(MOTOR_ADC_IU),
                     MotorAdc_ShuntLsb(MOTOR_ADC_IV),
                     MotorAdc_ShuntLsb(MOTOR_ADC_IW),
@@ -74,8 +84,52 @@ static void motor_tick_dispatch(void)
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
   if (g_motor_trace.source == MOTOR_TRACE_SRC_FOC)
   {
-    MotorTrace_Push(g_motor_foc.id_ma, g_motor_foc.iq_ma,
-                    (int16_t)(g_motor_foc.theta >> 1), g_motor_foc.vq_mv);
+    int16_t hall = 0;
+
+#if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
+    hall = (int16_t)g_motor_angle.hall;
+#endif
+    MotorTrace_Push((int16_t)g_motor_foc_fx.id_lsb,
+                    (int16_t)g_motor_foc_fx.iq_lsb,
+                    (int16_t)(g_motor_foc_fx.theta >> 1),
+                    hall);
+  }
+  if (g_motor_trace.source == MOTOR_TRACE_SRC_FOC_ANG)
+  {
+    int16_t hall = 0;
+
+#if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
+    hall = (int16_t)g_motor_angle.hall;
+#endif
+    MotorTrace_Push((int16_t)(g_motor_foc_fx.theta_interp >> 1),
+                    (int16_t)(g_motor_foc_fx.theta >> 1),
+                    (int16_t)(g_motor_foc_fx.dth >> 1),
+                    hall);
+  }
+  if (g_motor_trace.source == MOTOR_TRACE_SRC_FOC_V)
+  {
+    int32_t vd_mv = g_motor_foc_fx.vd_uv / 1000;
+    int32_t vq_mv = g_motor_foc_fx.vq_uv / 1000;
+
+    if (vd_mv > 32767)
+    {
+      vd_mv = 32767;
+    }
+    else if (vd_mv < -32768)
+    {
+      vd_mv = -32768;
+    }
+    if (vq_mv > 32767)
+    {
+      vq_mv = 32767;
+    }
+    else if (vq_mv < -32768)
+    {
+      vq_mv = -32768;
+    }
+    MotorTrace_Push((int16_t)vd_mv, (int16_t)vq_mv,
+                    (int16_t)g_motor_foc_fx.sat,
+                    (int16_t)g_motor_foc_fx.iq_lsb);
   }
 #endif
 #endif
@@ -83,21 +137,40 @@ static void motor_tick_dispatch(void)
 
 void MotorTick_Init(void)
 {
-  /* No timer of its own: the control loop runs from TIM1 update (TARS-aligned). */
+  /* No timer of its own. With MOTOR_ADC the tick is DMA TC (samples just
+   * finished, near the PWM peak). Without it, TIM1 update (valley). */
 }
 
 void MotorTick_Start(void)
 {
+#if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
+  MotorAdc_EnableTick();
+#else
   __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
+#endif
 }
 
 void MotorTick_Stop(void)
 {
+#if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
+  MotorAdc_DisableTick();
+#else
   __HAL_TIM_DISABLE_IT(&htim1, TIM_IT_UPDATE);
+#endif
+}
+
+void MotorTick_OnAdcComplete(void)
+{
+#if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
+  g_motor_tick_dir =
+      ((htim1.Instance->CR1 & TIM_CR1_DIR) != 0U) ? 1U : 0U;
+  motor_tick_dispatch();
+#endif
 }
 
 void MotorTick_OnTim1Update(void)
 {
+#if !defined(MOTOR_ADC) || (MOTOR_ADC == 0)
   if (__HAL_TIM_GET_FLAG(&htim1, TIM_FLAG_UPDATE) != RESET)
   {
     if (__HAL_TIM_GET_IT_SOURCE(&htim1, TIM_IT_UPDATE) != RESET)
@@ -106,4 +179,5 @@ void MotorTick_OnTim1Update(void)
       motor_tick_dispatch();
     }
   }
+#endif
 }

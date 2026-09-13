@@ -24,6 +24,7 @@ SETTLE_S="${SETTLE_S:-3}"
 OUT="${OUT:-/tmp/isense_cal.txt}"
 
 require_dap
+trap 'motor_off' EXIT
 : >"$OUT"
 
 # Start from a known-off state rather than trusting the previous run's cleanup.
@@ -40,7 +41,7 @@ for duty in $DUTIES; do
   echo
   echo "== static step, duty ${duty}% =="
   rm -rf "$BUILD"
-  cmake -S "$BENCH_ROOT" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release \
+  cmake -S "$BENCH_ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DMOTOR_AUTO_START=ON -DMOTOR_DUTY_PCT="$duty" -DMOTOR_STEP_MS=0 \
     -DMOTOR_PHASE_OFFSET=3 >/dev/null
   cmake --build "$BUILD" >/dev/null
@@ -117,7 +118,7 @@ PY
 echo
 echo "== reflashing safe firmware =="
 rm -rf "$BUILD"
-cmake -S "$BENCH_ROOT" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release \
+cmake -S "$BENCH_ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DMOTOR_AUTO_START=OFF >/dev/null
 cmake --build "$BUILD" >/dev/null
 flash_elf

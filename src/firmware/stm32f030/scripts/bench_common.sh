@@ -72,6 +72,25 @@ cpu_alive() {
   return 0
 }
 
+# Read TIM1_SR BIF and nFAULT before touching them. A stale BIF with
+# nFAULT high is leftover from a previous trip; clear only then.
+report_and_clear_stale_bif() {
+  local sr idr bif nfault
+  sr=$(read_words 0x40012C10 1 | head -1)
+  idr=$(read_words 0x48000010 1 | head -1)
+  bif=$(( (16#${sr:-0} >> 7) & 1 ))
+  nfault=$(( (16#${idr:-0} >> 6) & 1 ))
+  echo "  TIM1_SR BIF=${bif}  nFAULT=${nfault}  (1 = no fault)"
+  if [[ "$bif" -eq 1 && "$nfault" -eq 1 ]]; then
+    echo "  clearing stale BIF (nFAULT is high)"
+    ocd -c 'init' -c 'mmw 0x40012C10 0 0x80' -c 'exit' >/dev/null
+  elif [[ "$bif" -eq 1 ]]; then
+    echo "  BIF set and nFAULT low — not clearing; find the fault" >&2
+    return 1
+  fi
+  return 0
+}
+
 # The MCU is powered through the debug probe, so a missing probe looks exactly
 # like a dead board: no PWM and no bus current. Fail loudly instead of measuring
 # a target that is not running.
@@ -97,12 +116,71 @@ flash_elf() {
 # leaves the board armed rather than stopped, and board_check.sh flags it. So
 # clear the two enable flags first -- both are volatile, so the ISR sees them.
 motor_off() {
-  local cmds=() sym addr
+  local cmds=() sym addr fx
   for sym in s_hall6_enable s_ol_enable; do
     addr=$(sym_addr "$sym" 2>/dev/null) && cmds+=(-c "mwb $addr 0")
   done
-  ocd -c 'init' "${cmds[@]}" \
-      -c "mmw $TIM1_BDTR 0 0x8000" -c "mww $TIM1_CCER 0" -c 'exit' >/dev/null
+  addr=$(sym_addr g_motor_foc_handover 2>/dev/null) && cmds+=(-c "mwb $addr 2")
+  # mode sits at byte +32 of g_motor_foc_fx. Write it here so the next
+  # CURRENT tick cannot OR CCER back on after we clear MOE.
+  fx=$(sym_addr g_motor_foc_fx 2>/dev/null) && cmds+=(-c "mwb $((fx + 32)) 0")
+  if [[ ${#cmds[@]} -gt 0 ]]; then
+    ocd -c 'init' "${cmds[@]}" \
+        -c "mmw $TIM1_BDTR 0 0x8000" -c "mww $TIM1_CCER 0" -c 'exit' >/dev/null
+  else
+    ocd -c 'init' \
+        -c "mmw $TIM1_BDTR 0 0x8000" -c "mww $TIM1_CCER 0" -c 'exit' >/dev/null
+  fi
+}
+
+# DAP is host-pull: the MCU cannot push. The ISR writes g_motor_foc_fx.mode
+# when it actually takes CURRENT; the host polls that byte and beeps.
+host_beep() {
+  local snd
+  for snd in /System/Library/Sounds/Glass.aiff \
+             /System/Library/Sounds/Ping.aiff \
+             /System/Library/Sounds/Sosumi.aiff; do
+    if [[ -f "$snd" ]]; then
+      afplay "$snd" >/dev/null 2>&1 &
+      return
+    fi
+  done
+  printf '\a'
+}
+
+# Distinct from host_beep (Glass). Three Bassos plus a spoken line so
+# a person in the room hears a fault without watching the terminal.
+host_alarm() {
+  local snd=/System/Library/Sounds/Basso.aiff
+  echo "  ALARM — motor fault" >&2
+  if [[ -f "$snd" ]]; then
+    afplay "$snd" >/dev/null 2>&1
+    afplay "$snd" >/dev/null 2>&1
+    afplay "$snd" >/dev/null 2>&1
+  else
+    printf '\a\a\a' >&2
+  fi
+  say -v Tingting '电机故障' >/dev/null 2>&1 \
+    || say 'motor fault' >/dev/null 2>&1 \
+    || true
+}
+
+# After the host writes g_motor_foc_handover=1, wait until the ISR acks
+# CURRENT (mode byte at g_motor_foc_fx+32), then beep.
+wait_foc_current_beep() {
+  local fx="$1" word mode try
+  for try in 1 2 3 4 5 6 7 8 9 10; do
+    word=$(read_words "$((fx + 32))" 1 | head -1)
+    mode=$((16#${word:-0} & 0xFF))
+    if [[ "$mode" -eq 2 ]]; then
+      echo "  MCU ack CURRENT — beep"
+      host_beep
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "  MCU did not ack CURRENT (no beep)" >&2
+  return 1
 }
 
 # UT61E serial telemetry drops frames occasionally; retry before giving up.

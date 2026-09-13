@@ -33,9 +33,11 @@ MODE_NAMES = {0: "idle", 1: "oneshot", 2: "wrap"}
 SOURCES = {
     0: ("none", ["ch0", "ch1", "ch2", "ch3"]),
     1: ("hall6", ["hall_raw", "step", "ticks_since_edge", "kick"]),
-    2: ("foc", ["ia_lsb", "ib_lsb", "theta_q15", "iq_lsb"]),
+    2: ("foc", ["id_lsb", "iq_lsb", "theta_q15", "hall_raw"]),
     3: ("adc", ["iu_lsb", "iv_lsb", "iw_lsb", "vbus_raw"]),
     4: ("angle", ["hall_raw", "theta_q15", "ticks_in_sector", "edge_jump"]),
+    5: ("foc_ang", ["foc_disc_q15", "foc_ip_q15", "dth_q15", "hall_raw"]),
+    6: ("foc_v", ["vd_mv", "vq_mv", "sat", "iq_lsb"]),
 }
 
 DEG_PER_Q15 = 360.0 / 32768.0   # theta is stored as theta_q16 >> 1
@@ -344,12 +346,190 @@ def main() -> int:
             if secs:
                 print(f"sectors    {secs} samples")
 
+    if hdr["source"] == 2:
+        import math
+        import statistics
+
+        id_lsb = [r[0] for r in rows]
+        iq_lsb = [r[1] for r in rows]
+        hall = [r[3] for r in rows]
+        id_ma = [v * MA_PER_LSB for v in id_lsb]
+        iq_ma = [v * MA_PER_LSB for v in iq_lsb]
+        mid = statistics.mean(id_ma)
+        miq = statistics.mean(iq_ma)
+        print()
+        print(f"id         {mid:+8.1f} mA   stdev {statistics.pstdev(id_ma):6.1f} mA"
+              f"   [{min(id_ma):+.0f} .. {max(id_ma):+.0f}]")
+        print(f"iq         {miq:+8.1f} mA   stdev {statistics.pstdev(iq_ma):6.1f} mA"
+              f"   [{min(iq_ma):+.0f} .. {max(iq_ma):+.0f}]")
+        print(f"|id|/|iq|  {abs(mid) / max(abs(miq), 1e-3):.2f}"
+              f"   (6-step current is not pure q; DC id is the alignment cue)")
+
+        # φ from mean(id,iq) is circular once the id PI is on: the loop
+        # forces id≈0 in whatever frame Park is using. Only print it for
+        # OBSERVE (id_on=0).
+        id_on = 1
+        try:
+            id_on = read_words(args.cfg, sym_addr(args.elf, "g_motor_foc_id_on"), 1)[0] & 0xFF
+        except (subprocess.CalledProcessError, SystemExit, IndexError):
+            pass
+        signed = None
+        off_q16 = None
+        best_id = mid
+        best_iq = miq
+        if id_on != 0:
+            print("chosen φ   skipped — id PI is on, φ≈0 is not an alignment measurement")
+        else:
+            a = math.degrees(math.atan2(-mid, miq)) % 360.0
+            twins = (a, (a + 180.0) % 360.0)
+            scored = []
+            for deg in twins:
+                phi = math.radians(deg)
+                c, s = math.cos(phi), math.sin(phi)
+                mids = statistics.mean([id_ * c + iq_ * s for id_, iq_ in zip(id_ma, iq_ma)])
+                miqs = statistics.mean([-id_ * s + iq_ * c for id_, iq_ in zip(id_ma, iq_ma)])
+                scored.append((deg, mids, miqs))
+            print("φ twins    (same |iq|, opposite sign; pick the one that keeps iq sign)")
+            for deg, mids, miqs in scored:
+                q16 = int(round((deg if deg <= 180 else deg - 360) * 65536 / 360))
+                tag = "keep-iq-sign" if (miqs * miq) > 0 else "flips-torque"
+                print(f"            {deg:6.1f} deg  Q16={q16:+6d}  "
+                      f"id {mids:+7.1f}  iq {miqs:+7.1f}  {tag}")
+            keep = next((t for t in scored if t[2] * miq > 0), scored[0])
+            best_phi = keep[0]
+            best_id = keep[1]
+            best_iq = keep[2]
+            signed = best_phi if best_phi <= 180 else best_phi - 360
+            off_q16 = int(round(signed * 65536 / 360))
+            print(f"chosen φ   {signed:+.1f} deg  OFFSET_Q16={off_q16}  "
+                  f"then mean id {best_id:+.1f} mA  iq {best_iq:+.1f} mA")
+
+        print("per hall   code   n     mean id     mean iq")
+        for code in sorted(set(hall)):
+            ids = [id_ma[i] for i, h in enumerate(hall) if h == code]
+            iqs = [iq_ma[i] for i, h in enumerate(hall) if h == code]
+            if ids:
+                print(f"            {code:3d}  {len(ids):3d}  "
+                      f"{statistics.mean(ids):+8.1f} mA  "
+                      f"{statistics.mean(iqs):+8.1f} mA")
+
+        theta = [r[2] for r in rows]
+        net = 0
+        for a, b in zip(theta, theta[1:]):
+            d = b - a
+            if d > 16384:
+                d -= 32768
+            elif d < -16384:
+                d += 32768
+            net += d
+        net_deg = net * DEG_PER_Q15
+        codes = sorted(set(hall))
+        edges = sum(1 for i in range(1, len(hall)) if hall[i] != hall[i - 1])
+        rotating = len(codes) >= 5 and abs(net_deg) > 180.0
+        print(f"motion     halls {codes}  edges {edges}  "
+              f"net theta {net_deg:+.1f} deg  "
+              f"{'ROTATING' if rotating else 'DITHER (not rotation)'}")
+        extra_rot = {"hall_codes": codes, "hall_edges": edges,
+                     "net_theta_deg": net_deg, "rotating": rotating}
+
+    if hdr["source"] == 5:
+        import statistics
+
+        foc = [r[0] for r in rows]
+        interp = [r[1] for r in rows]
+        dth = [r[2] for r in rows]
+        hall = [r[3] for r in rows]
+        dth_deg = [v * DEG_PER_Q15 for v in dth]
+        mean_d = statistics.mean(dth_deg)
+        sd_d = statistics.pstdev(dth_deg) if len(dth_deg) > 1 else 0.0
+        print()
+        print(f"dth        FocThetaInterp-FocTheta  mean {mean_d:+.1f} deg  "
+              f"stdev {sd_d:.1f} deg  [{min(dth_deg):+.1f} .. {max(dth_deg):+.1f}]")
+        print("per hall   code   n    mean dth")
+        per = {}
+        for code in sorted(set(hall)):
+            ds = [dth_deg[i] for i, h in enumerate(hall) if h == code]
+            if ds:
+                per[int(code)] = statistics.mean(ds)
+                print(f"            {int(code):3d}  {len(ds):3d}  "
+                      f"{per[int(code)]:+8.1f} deg")
+        net = 0
+        for a, b in zip(interp, interp[1:]):
+            d = b - a
+            if d > 16384:
+                d -= 32768
+            elif d < -16384:
+                d += 32768
+            net += d
+        net_deg = net * DEG_PER_Q15
+        codes = sorted(set(int(h) for h in hall))
+        edges = sum(1 for i in range(1, len(hall)) if hall[i] != hall[i - 1])
+        rotating = len(codes) >= 5 and abs(net_deg) > 180.0
+        print(f"motion     halls {codes}  edges {edges}  "
+              f"net foc_ip {net_deg:+.1f} deg  "
+              f"{'ROTATING' if rotating else 'DITHER (not rotation)'}")
+        extra_rot = {
+            "hall_codes": codes, "hall_edges": edges,
+            "net_theta_deg": net_deg, "rotating": rotating,
+            "dth_mean_deg": mean_d, "dth_stdev_deg": sd_d,
+            "dth_per_hall_deg": per,
+        }
+
+    if hdr["source"] == 6:
+        import statistics
+
+        vd = [r[0] / 1000.0 for r in rows]
+        vq = [r[1] / 1000.0 for r in rows]
+        sat = [r[2] for r in rows]
+        iq = [r[3] * MA_PER_LSB for r in rows]
+        sat_frac = sum(1 for s in sat if s != 0) / len(sat)
+        vq_hi = max(abs(v) for v in vq)
+        limited = sat_frac >= 0.05 or vq_hi >= 2.28
+        print()
+        print(f"vd         {statistics.mean(vd):+.3f} V   "
+              f"[{min(vd):+.3f} .. {max(vd):+.3f}]")
+        print(f"vq         {statistics.mean(vq):+.3f} V   "
+              f"[{min(vq):+.3f} .. {max(vq):+.3f}]")
+        print(f"sat        {sat_frac*100:.1f}% of ticks")
+        print(f"iq         {statistics.mean(iq):+.1f} mA   "
+              f"stdev {statistics.pstdev(iq):.1f} mA")
+        if limited:
+            print("volt loop  VOLTAGE-LIMITED — empty-load mean iq is not a "
+                  "current-loop score")
+        else:
+            print("volt loop  both axes inside the ceiling this window")
+        extra_v = {
+            "vd_mean_v": statistics.mean(vd),
+            "vq_mean_v": statistics.mean(vq),
+            "sat_frac": sat_frac,
+            "iq_mean_ma": statistics.mean(iq),
+            "voltage_limited": limited,
+        }
+
+    extra = {}
+    if hdr["source"] == 2:
+        extra = {
+            "id_mean_ma": statistics.mean(id_ma),
+            "iq_mean_ma": statistics.mean(iq_ma),
+            "id_stdev_ma": statistics.pstdev(id_ma),
+            "iq_stdev_ma": statistics.pstdev(iq_ma),
+            "best_offset_deg": signed,
+            "best_offset_q16": off_q16,
+            "best_id_mean_ma": best_id,
+            "best_iq_mean_ma": best_iq,
+        }
+        extra.update(extra_rot)
+    elif hdr["source"] == 5:
+        extra = extra_rot
+    elif hdr["source"] == 6:
+        extra = extra_v
+
     if args.json:
         import json
         import statistics
 
         cols = [[r[k] for r in rows] for k in range(hdr["channels"])]
-        args.json.write_text(json.dumps({
+        payload = {
             "source": src_name,
             "samples": len(rows),
             "dt_us": dt_us,
@@ -360,7 +540,9 @@ def main() -> int:
             "max_lsb": [max(c) for c in cols],
             "ma_per_lsb": MA_PER_LSB,
             "vbus_v_per_lsb": VBUS_V_PER_LSB,
-        }, indent=2), encoding="utf-8")
+        }
+        payload.update(extra)
+        args.json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"json       {args.json}")
 
     if not args.no_plot:

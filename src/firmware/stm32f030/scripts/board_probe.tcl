@@ -1,15 +1,20 @@
 # Probe the motor-ctrl mainboard v0.1 analog front end and fault lines.
 #
 # Deliberately does NOT halt the CPU: every access goes through the DAP while
-# firmware keeps running, so this can also be used with the motor spinning.
-# That is safe because the firmware never touches ADC1 or PA0..PA5 -- the only
-# shared register is GPIOA MODER, which firmware writes once at init and this
-# script restores before returning.
+# firmware keeps running.
+#
+# Idle: this script takes over ADC1 to read NTC / VREFINT / V_BOOST. That is
+# safe only when the motor is off -- the control tick is now DMA TC on ADC1
+# (roadmap 4.1), so stealing the ADC while spinning stops commutation.
+# --running must set probe_skip_adc 1 and read currents from g_motor_adc_raw.
 #
 # Emits machine-parsable "KEY value..." lines for scripts/board_check.sh.
 
 if {![info exists probe_passes]} {
     set probe_passes 3
+}
+if {![info exists probe_skip_adc]} {
+    set probe_skip_adc 0
 }
 
 proc poll {addr mask want {n 2000}} {
@@ -34,6 +39,11 @@ echo [format "TIM1 %u %u %u %u %u %u" \
 set moder_a [mrw 0x48000000]
 echo [format "GPIOA %u %u" $moder_a [mrw 0x48000010]]
 echo [format "GPIOB %u" [mrw 0x48000410]]
+
+if {$probe_skip_adc} {
+    echo "SKIPADC 1"
+    return
+}
 
 # PA0..PA5 to analog input
 mww 0x48000000 [expr {$moder_a | 0x00000FFF}]
