@@ -1,6 +1,6 @@
 # motor-ctrl
 
-STM32F030K6（LQFP-32）三半桥 BLDC 主控：PCB + 固件。控制方式为 Hall 闭环 6-step（`hall6`），自 TARS 迁移。
+STM32F030K6（LQFP-32）三半桥 PMSM 主控：PCB + 固件。Hall 闭环 6-step（`hall6`）仍是回退路径；交付的控制是定点 FOC 电流环 + 速度环（`motor_foc_fx.c`），成绩见 [`docs/report/speed-loop-20260914.md`](docs/report/speed-loop-20260914.md)。
 
 目录布局与 [`tars-io-mux`](../tars-io-mux) 一致，便于复用工具链与协作习惯。
 
@@ -17,7 +17,7 @@ motor-ctrl/
 └── tools/                    # 主机侧脚本、测试工具
 ```
 
-FOC 模型与生成代码在 `sim/`（MATLAB 脚本 + `codegen_stm32/`），尚未接入固件构建。
+MATLAB 模型与 `sim/codegen_stm32/` 浮点代码**不**进默认固件（M0 软浮点放不下 20 kHz）。参数真源是 `sim/mc_params.m`（λ = 6.3 mWb，Kt = 0.0378 N·m/A）；改它不会改芯片上的定点环，除非再跑 `gen_code.m`。
 
 ## 快速入口
 
@@ -27,6 +27,7 @@ FOC 模型与生成代码在 `sim/`（MATLAB 脚本 + `codegen_stm32/`），尚�
 | [`src/platforms/stm32f030/README.md`](src/platforms/stm32f030/README.md) | 平台层：hall6 闭环、开环、TIM1 PWM 与控制环 |
 | [`src/shared/tnb/README.md`](src/shared/tnb/README.md) | 主机–从机协议真源 |
 | [`docs/roadmap.md`](docs/roadmap.md) | FOC / 弱磁 / 动态性能的分阶段路线图与验收判据 |
+| [`docs/report/speed-loop-20260914.md`](docs/report/speed-loop-20260914.md) | 速度环交付：λ、Kt、wrap 成绩、转矩曲线 |
 | [`docs/measurement-validity.md`](docs/measurement-validity.md) | 实测前自检清单、静默限幅一览、无效实验模式 |
 
 改动 PWM 相关代码前，先读 `src/firmware/stm32f030/README.md` 的

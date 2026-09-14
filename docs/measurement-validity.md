@@ -350,8 +350,19 @@ flash_elf                   # 1.2 校验 Verified OK；内含 rbp all + resume (
 # ... 测量 ...
 
 motor_off                   # 停机
-# 刷回 AUTO_START=OFF 安全固件，确认空载回到约 6 mA
+# 刷回 AUTO_START=OFF 安全固件，确认空载回到约 4 mA
 ```
 
 三个扫描脚本（`duty_sweep.sh` / `ccr_sweep.sh` / `step_table.sh`）已内置
 探头预检、烧录校验和安全收尾，能用它们就不要手写 openocd 命令。
+
+---
+
+## 5. 速度环成绩怎么记
+
+1. **成绩是 wrap，不是 `w_meas`。** wrap = `foc_ang` 净角 / 墙钟 dt（`arm_wrap` decim 20，256 ms）。`w_meas` 是环内表头。固件 `6cf8f35` 起按扇区 `dwell+1` 修正过 2–3% 的偏高，仍以 wrap 为准。
+2. **decim 200 的 oneshot 不要用 ±180° unwrap。** 10 ms 采样上 80 elec/s 已走过 288°，会混叠成约 20 elec/s。`print_spd_step` 用 Viterbi 数整圈；立刻 dump 到指定 `--csv`。
+3. **先开速度环，再抬 `VQMAX_UV`。** 反了会在满 iq 自由转上坐 2 s。
+4. **`BUS_ABORT_A` 只有一条。** 默认 0.50 A。带载 0.44 A 是机械功率。不要在 `foc_rotating` 上 `|| true`。
+5. **转矩报差分。** T = 0.0378·iq。刻度之间的 Δiq（重复性约 2 mA）才是高信噪比。
+6. **不要再做弱磁。** 见 [`report/speed-loop-20260914.md`](report/speed-loop-20260914.md)。

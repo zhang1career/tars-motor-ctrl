@@ -1,6 +1,6 @@
 # motor-ctrl 固件（STM32F030K6）
 
-Hall 闭环 6-step BLDC 控制，自 TARS `tars_hall6.c` 迁移。纯开环（`tars_openloop.c` 一路）保留作实机诊断。
+Hall 闭环 6-step（回退）+ 定点 FOC 电流环 / 速度环。hall6 自 TARS `tars_hall6.c` 迁移；开环只作诊断。速度环成绩见 [`docs/report/speed-loop-20260914.md`](../../../docs/report/speed-loop-20260914.md)。
 
 ## 目录
 
@@ -24,11 +24,26 @@ src/platforms/stm32f030/  # hall6 / 开环算法 + PWM / Hall / TIM1 控制环
 ```
 hall6 闭环：phase 3, kick duty 20%, run duty 20%, direction 0（顺时针；1 为逆时针）
 TIM1：      20 kHz 中心对齐, DTG=72（1.5 us 死区）, 控制环 20 kHz
+ADC lead：  72 counts（1.5 µs），对准 6.2 V 低边窗口
+park_off：  +7°（FX_PARK_OFF_Q16 = 1274）
 ```
 
-正反转效率对称，实测两个方向都是约 60 mA / 24 电周期/s。
+hall6 20%：两个方向约 60–70 mA、约 24 电周期/s。
 
-实测：绕组约 1.6 A，转起来后反电动势把母线压到约 70 mA、约 24 电周期/s。
+## FOC 速度环（交付）
+
+实现是 `src/platforms/stm32f030/motor_foc_fx.c`，不是 `sim/codegen_stm32`。转速成绩用 **wrap**（`foc_ang` 净角 / dt），不用环内表头 `w_meas`。
+
+| 项 | 值 |
+|---|---|
+| λ / Kt | 6.3 mWb / 0.0378 N·m/A（`sim/mc_params.m`） |
+| 稳态 | wrap 抱住 80 与 130 elec/s，正反转 |
+| 80→130 10–90% | 约 300 ms |
+| 超调 | 数个 elec/s（轻载约 +3.5，刻度 5 偶发 +10） |
+| 12 V 基速 | wrap 约 150 elec/s（vq 已到 6.2 V ≈ Vdc/√3 的 93%） |
+| 弱磁 | **不做**。λ/Ld = 14.4 A，Imax = 3 A |
+
+协议：`SPD_S` + `W_REFS`，先 `spd_on` 再抬 `VQMAX_UV`。阶跃用 oneshot decim 200，`print_spd_step` 用 Viterbi 数整圈（10 ms 采样上 ±180° unwrap 会混叠）。`BUS_ABORT_A` 默认 0.50 A，和 `foc_rotating` 同一条，不要 `|| true`。
 
 ## 构建
 
@@ -58,7 +73,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 | `MOTOR_ANGLE` | Hall 连续电角度（默认 ON） |
 | `MOTOR_ANGLE_OFFSET_Q16` / `MOTOR_ANGLE_ANCHOR_TRIM` | 角度标定结果（65536/电周期），阶段 E 用 `id` 测定，默认全零 |
 | `MOTOR_ADC` | PWM 同步的相电流 + 母线电压采样（默认 ON） |
-| `MOTOR_ADC_LEAD_COUNTS` | ADC 序列比计数峰值提前多少计数（默认 168 = 3.5 µs，序列跨在峰值两侧）。336 在 vq 5.0 V 的高 duty 下会让 i0 偏到 −36 mA |
+| `MOTOR_ADC_LEAD_COUNTS` | ADC 序列比计数峰值提前多少计数（默认 **72 = 1.5 µs**）。168/336 在 vq 5–6.2 V 会把 i0 偏到 −20～−36 mA |
 | `MOTOR_ADC_STROBE` | 在 ADC 序列结束时脉冲 TP1，供示波器验证采样点（默认 **OFF**）。它的沿会在 ISENSE 上耦合出百 mV 级尖峰，只在示波器会话里开 |
 | `MOTOR_TRACE` | 逐拍采样缓冲（默认 ON，约 2 KB RAM） |
 | `MOTOR_TRACE_DEPTH` / `MOTOR_TRACE_DECIM` | 缓冲深度 / 每 N 拍存一次（默认 256 / 1） |
@@ -99,6 +114,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 | `scripts/ccr_sweep.sh` | 按 CCR 计数扫描（duty 百分比在死区阈值附近粒度不够时用） |
 | `scripts/step_table.sh` | 逐个静态保持 6 个换相步，检查三相是否对称 |
 | `scripts/pole_pairs.sh` | 数极对数（已实测 4） |
+| `scripts/foc_current.sh` | hall6 → FOC 电流环交接；`SPD_S` / `W_REFS` 跑速度环与阶跃 |
 
 ## API
 

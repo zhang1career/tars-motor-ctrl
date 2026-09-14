@@ -4,7 +4,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `hall6.c/.h` | Hall 闭环 6-step：kick 启动、MOE 延迟释放、phase 偏移 |
+| `hall6.c/.h` | Hall 闭环 6-step：kick、MOE 延迟释放、FocTheta 插值与一圈 ω |
 | `openloop.c/.h` | 6-step / 3-step 开环 + Hall lock/kick/stall（实机诊断用） |
 | `motor_pwm.c/.h` | TIM1 六路互补 PWM（20 kHz 中心对齐）、死区、MOE 控制 |
 | `motor_hall.c/.h` | Hall GPIO 读取 |
@@ -13,6 +13,7 @@
 | `motor_adc.c/.h` | PWM 同步的三相电流 + 母线电压采样（TIM1 CH4 → TRGO → ADC → DMA） |
 | `motor_angle.c/.h` | Hall 连续电角度（锚点 + per-sector 时长记忆外推） |
 | `motor_cycles.c/.h` | 目标板执行时间测量，**TIM16** 自由运行计数器 |
+| `motor_foc_fx.c/.h` | 定点 FOC：电流环 + 速度环。成绩见 [`docs/report/speed-loop-20260914.md`](../../../docs/report/speed-loop-20260914.md) |
 
 正式控制方式是 **hall6 闭环**；`openloop.c` 只在实机排查时用（配合
 `src/firmware/stm32f030/scripts/` 下的扫描脚本）。
