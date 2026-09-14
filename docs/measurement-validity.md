@@ -360,9 +360,11 @@ motor_off                   # 停机
 
 ## 5. 速度环成绩怎么记
 
-1. **成绩是 wrap，不是 `w_meas`。** wrap = `foc_ang` 净角 / 墙钟 dt（`arm_wrap` decim 20，256 ms）。`w_meas` 是环内表头。固件 `6cf8f35` 起按扇区 `dwell+1` 修正过 2–3% 的偏高，仍以 wrap 为准。
-2. **decim 200 的 oneshot 不要用 ±180° unwrap。** 10 ms 采样上 80 elec/s 已走过 288°，会混叠成约 20 elec/s。`print_spd_step` 用 Viterbi 数整圈；立刻 dump 到指定 `--csv`。
+1. **成绩是 wrap，不是 `w_meas`。** wrap = `foc_ang` 净角 / 墙钟 dt（`arm_wrap` decim 20，256 ms）。`w_meas` 是环内表头。`dwell+1` 只加起始沿那一拍；**不要再加 `n/2`**（2026-09-14 刻度 3 复测：去掉后 wrap ≈ w_ref，不再高 0.9–1.4%）。去掉后仍系统性偏低约 0.25%@80、0.6%@130（少补约 0.13 拍），不要把 `n/2` 加回去。
+2. **decim 200 的 oneshot 不要用 ±180° unwrap。** 10 ms 采样上 80 elec/s 已走过 288°，会混叠成约 20 elec/s。`print_spd_step` 用 Viterbi 数整圈、**100 ms** 滑窗；立刻 dump 到指定 `--csv`。
+2b. **`|i0| > 10 mA` 的 acc 均值不作成绩。** 刻度 5 / dir0 / 130 一次 i0 = −16 mA 伴随着 iq 少报 28 mA。过调制 / 高占空（`OVERMOD=1`、vq 顶到 7.7 V）时 i0 可到 −70 mA，iq/id 整窗作废，只信 wrap。
+2c. **150 以上先读 TIM1 `lo_win = ARR − max(CCR) − DTG`，不要扫 `ADC_LEAD`。** 刻度 4 / 6.58 V / 150：最高相 CCR=ARR，`lo_win = −72`，低边窗口没了。72/48/30 的 lead 微扫 i0 都是 −50 mA，分不清「lead 对」和「窗口已经是零」。`foc_current.sh` 每个 w_ref 抱住后会打 `dump_ccr`。
 3. **先开速度环，再抬 `VQMAX_UV`。** 反了会在满 iq 自由转上坐 2 s。
 4. **`BUS_ABORT_A` 只有一条。** 默认 0.50 A。带载 0.44 A 是机械功率。不要在 `foc_rotating` 上 `|| true`。
-5. **转矩报差分。** T = 0.0378·iq。刻度之间的 Δiq（重复性约 2 mA）才是高信噪比。
-6. **不要再做弱磁。** 见 [`report/speed-loop-20260914.md`](report/speed-loop-20260914.md)。
+5. **转矩报差分。** T = 0.0378·iq。**同一旋钮位置**重复性约 ±3 mA；同一次返回点的 1–2 mA 不是跨次重复性。**拨一次盘**的重复性大约 20 mA（刻度 4：402 → 383）。小于拨盘噪声的 Δiq（刻度 0/1/2 的 +10 mA）不要当台阶。
+6. **不要再做弱磁。** 速度环已交差，见 [`report/speed-loop-20260914.md`](report/speed-loop-20260914.md)。

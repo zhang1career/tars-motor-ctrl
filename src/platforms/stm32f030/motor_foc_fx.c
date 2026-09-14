@@ -16,6 +16,7 @@ volatile int32_t g_motor_foc_vd_max_uv;
 volatile int32_t g_motor_foc_park_slew_q16;
 volatile int32_t g_motor_foc_park_off_q16;
 volatile uint8_t g_motor_foc_spd_on;
+volatile uint8_t g_motor_foc_overmod;
 volatile int32_t g_motor_foc_w_ref_eps;
 volatile int32_t g_motor_foc_w_meas_eps;
 
@@ -118,7 +119,7 @@ static uint8_t s_w_ki_div;
 #define FX_W_SLEW_DIV 8
 #define FX_W_IQ_FLOOR 12
 #define FX_W_REF_DEFAULT_EPS 40
-#define FX_W_REF_MAX_EPS 160
+#define FX_W_REF_MAX_EPS 180
 
 volatile motor_foc_fx_acc_t g_motor_foc_fx_acc;
 
@@ -156,6 +157,7 @@ void MotorFocFx_Init(void)
   g_motor_foc_park_slew_q16 = FX_PARK_SLEW_Q16;
   g_motor_foc_park_off_q16 = FX_PARK_OFF_Q16;
   g_motor_foc_spd_on = 0U;
+  g_motor_foc_overmod = 0U;
   g_motor_foc_w_ref_eps = FX_W_REF_DEFAULT_EPS;
   g_motor_foc_w_meas_eps = 0;
   s_w_int_q8 = 0;
@@ -223,6 +225,7 @@ void MotorFocFx_Handover(void)
     g_motor_foc_park_slew_q16 = FX_PARK_SLEW_Q16;
     g_motor_foc_park_off_q16 = FX_PARK_OFF_Q16;
     g_motor_foc_spd_on = 0U;
+    g_motor_foc_overmod = 0U;
     g_motor_foc_w_meas_eps = 0;
     s_w_int_q8 = 0;
     s_w_filt_q8 = 0;
@@ -313,9 +316,9 @@ static int32_t fx_vq_max_uv(void)
   {
     m = 1200000;
   }
-  else if (m > 6200000)
+  else if (m > 7700000)
   {
-    m = 6200000;
+    m = 7700000;
   }
   return m;
 }
@@ -680,22 +683,21 @@ void MotorFocFx_Step(void)
     vq_uv = FX_KP_UV_PER_LSB * eq + s_iq_int_uv;
   }
 
-  /* ---- 4.4 voltage circle ---- */
+  /* ---- 4.4 voltage limit. Linear: inscribed circle Vdc/√3.
+   * Overmod: skip the circle; hexagon clamp after iPark (span ≤ Vdc)
+   * reaches the vertices (2/3 Vdc, six-step fundamental ~2 Vdc/π). */
   vd_u = vd_uv >> 10;
   vq_u = vq_uv >> 10;
   vmax_u = vmax_uv >> 10;
   vmag2 = vd_u * vd_u + vq_u * vq_u;
-  if (vmag2 > (vmax_u * vmax_u))
+  g_motor_foc_fx.sat = 0U;
+  if ((g_motor_foc_overmod == 0U) && (vmag2 > (vmax_u * vmax_u)))
   {
     int32_t vmag = (int32_t)isqrt32((uint32_t)vmag2);
 
     vd_u = (vd_u * vmax_u) / vmag;
     vq_u = (vq_u * vmax_u) / vmag;
     g_motor_foc_fx.sat = 1U;
-  }
-  else
-  {
-    g_motor_foc_fx.sat = 0U;
   }
 
   /* ---- 4.5 inverse Park + SVPWM ---- */
@@ -723,6 +725,43 @@ void MotorFocFx_Step(void)
   if (vc < vmin_ph)
   {
     vmin_ph = vc;
+  }
+  if (g_motor_foc_overmod != 0U)
+  {
+    int32_t span = vmax_ph - vmin_ph;
+    int32_t vdc_u = (vdc_mv * 1000) >> 10;
+
+    if ((span > vdc_u) && (span > 0))
+    {
+      int32_t mid = (vmax_ph + vmin_ph) >> 1;
+
+      va = mid + ((va - mid) * vdc_u) / span;
+      vb = mid + ((vb - mid) * vdc_u) / span;
+      vc = mid + ((vc - mid) * vdc_u) / span;
+      vmax_ph = va;
+      vmin_ph = va;
+      if (vb > vmax_ph)
+      {
+        vmax_ph = vb;
+      }
+      if (vc > vmax_ph)
+      {
+        vmax_ph = vc;
+      }
+      if (vb < vmin_ph)
+      {
+        vmin_ph = vb;
+      }
+      if (vc < vmin_ph)
+      {
+        vmin_ph = vc;
+      }
+      g_motor_foc_fx.sat = 1U;
+      /* sat is a flag only. It does not rewind s_iq_int_uv / s_id_int_uv.
+       * Linear mode already clamps those to vq_hi/vd_hi. Overmod raises
+       * vq_hi to 7.7 V while the hexagon delivers less, so Ki can sit
+       * on the software ceiling and hunt. Do not treat sat as anti-windup. */
+    }
   }
   /* ---- 4.6 CCR. 33554 = 1.024 * 32768; v is VU = 1.024 mV. ---- */
   arr = (int32_t)__HAL_TIM_GET_AUTORELOAD(&htim1);

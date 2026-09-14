@@ -89,10 +89,9 @@ extern volatile uint8_t g_motor_foc_id_on;
  * is field weakening. Do not add this to g_motor_foc_fx — mode is
  * at byte +32 and the handover poll uses that offset. */
 extern volatile int32_t g_motor_foc_id_ref;
-/* vq ceiling in µV. Handover 2.4e6. ISR clamps 1.2e6..6.2e6.
- * Raise past 2.4e6 only after interp is locked. 5.0e6 is empty-load
- * base speed (~120 elec/s). 6.2e6 is still under the Vdc/√3 circle
- * at 12 V (~6.7 V). −id at 300 mA is not field weakening here. */
+/* vq ceiling in µV. Handover 2.4e6. ISR clamps 1.2e6..7.7e6.
+ * 6.2e6 is still under the Vdc/√3 circle. 7.7e6 is six-step
+ * fundamental (~2 Vdc/π) and needs g_motor_foc_overmod=1. */
 extern volatile int32_t g_motor_foc_vq_max_uv;
 /* |vd| ceiling in µV. Handover 2.4e6. ISR clamps 1.2e6..2.4e6. */
 extern volatile int32_t g_motor_foc_vd_max_uv;
@@ -111,16 +110,16 @@ extern volatile int32_t g_motor_foc_park_off_q16;
  * Empty-load free-run is voltage-limited; hold below that so vq
  * leaves the ceiling and the current loop can regulate. */
 extern volatile uint8_t g_motor_foc_spd_on;
-/* |electrical rev/s|. ISR clamps 0..160 so a host write cannot
- * outrun Park slew (183 elec/s at 600 Q16). Sign ignored; +iq
- * still follows hall6. 80 sits under the 3.6 V empty-load
- * free-run (~84). 120 is the 5.0 V software ceiling. Above that,
- * raise vq toward the bus circle; −id at IQ_LSB is not enough
- * flux. Wrap (foc_ang net/dt) is the score; w_meas is the loop
- * meter and reads high when hall sectors are unequal. */
+/* |electrical rev/s|. ISR clamps 0..180 (Park slew 183). Sign
+ * ignored; +iq still follows hall6. Wrap (foc_ang net/dt) is the
+ * score; w_meas is the loop meter. */
 extern volatile int32_t g_motor_foc_w_ref_eps;
 /* |electrical rev/s| from FocOmegaQ8, updated every CURRENT tick. */
 extern volatile int32_t g_motor_foc_w_meas_eps;
+/* 1 = skip the Vdc/√3 circle and clamp iPark to the hexagon
+ * (span ≤ Vdc). Linear 6.58 V already holds 174 @ 175; this is
+ * only past that. sat does not rewind Ki. */
+extern volatile uint8_t g_motor_foc_overmod;
 
 void MotorFocFx_Init(void);
 void MotorFocFx_SetMode(uint8_t mode);

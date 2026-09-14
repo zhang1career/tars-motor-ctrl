@@ -106,9 +106,10 @@ Ki_i = wc_i*Rs;           % integral gain (V/(A*s))
 % ----------------------------------------------------------------------
 % SPEED CONTROLLER (MATLAB / sim only — ~1 decade below current loop)
 %   On-target scores (2026-09-14, wrap = foc_ang net/dt, not w_meas):
-%     hold 80 / 130 elec/s both dirs; 80→130 10–90% ~300 ms; overshoot
-%     a few elec/s.  12 V base speed ~150 elec/s wrap.  No FW region
-%     (λ/Ld = 14.4 A, Imax = 3 A).  See docs/report/speed-loop-20260914.md.
+%     hold 80 / 130 elec/s both dirs; 80→130 10–90% ~300 ms (100 ms
+%     window); overshoot a few elec/s.  Linear 6.58 V holds wrap
+%     174 @ 175.  No FW region (λ/Ld = 14.4 A, Imax = 3 A).
+%     See docs/report/speed-loop-20260914.md.
 % ----------------------------------------------------------------------
 Kt   = 1.5*PolePairs*Lambda;  % 0.0378 N*m/A [MEASURED via λ]
 wc_w = 2*pi*25;               % speed loop bandwidth [rad/s]

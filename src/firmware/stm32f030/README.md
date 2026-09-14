@@ -30,20 +30,20 @@ park_off：  +7°（FX_PARK_OFF_Q16 = 1274）
 
 hall6 20%：两个方向约 60–70 mA、约 24 电周期/s。
 
-## FOC 速度环（交付）
+## FOC 速度环（已交差）
 
 实现是 `src/platforms/stm32f030/motor_foc_fx.c`，不是 `sim/codegen_stm32`。转速成绩用 **wrap**（`foc_ang` 净角 / dt），不用环内表头 `w_meas`。
 
 | 项 | 值 |
 |---|---|
 | λ / Kt | 6.3 mWb / 0.0378 N·m/A（`sim/mc_params.m`） |
-| 稳态 | wrap 抱住 80 与 130 elec/s，正反转 |
-| 80→130 10–90% | 约 300 ms |
-| 超调 | 数个 elec/s（轻载约 +3.5，刻度 5 偶发 +10） |
-| 12 V 基速 | wrap 约 150 elec/s（vq 已到 6.2 V ≈ Vdc/√3 的 93%） |
+| 稳态 | wrap 抱住 80 与 130 elec/s，正反转（无 `n/2`：刻度 3 为 79.8 / 129.4） |
+| 80→130 10–90% | 约 290–320 ms（100 ms 窗，刻度 3） |
+| 超调 | 刻度 3：+0.9～+1.7；刻度 5 旧 CSV 偶发 +10 |
+| 12 V 基速 | 线性真圆 6.58 V（Vdc/√3 @ 11.4 V）刻度 4 wrap **159 @ 160、174 @ 175**（两向）。6.2 V 是保守顶，约 149。150 以上最高相 CCR=ARR，低边窗口没了，iq 不作分 |
 | 弱磁 | **不做**。λ/Ld = 14.4 A，Imax = 3 A |
 
-协议：`SPD_S` + `W_REFS`，先 `spd_on` 再抬 `VQMAX_UV`。阶跃用 oneshot decim 200，`print_spd_step` 用 Viterbi 数整圈（10 ms 采样上 ±180° unwrap 会混叠）。`BUS_ABORT_A` 默认 0.50 A，和 `foc_rotating` 同一条，不要 `|| true`。
+协议：`SPD_S` + `W_REFS`，先 `spd_on` 再抬 `VQMAX_UV`。阶跃用 oneshot decim 200、100 ms 滑窗，`print_spd_step` 用 Viterbi 数整圈。`BUS_ABORT_A` 默认 0.50 A。`|i0|>10 mA` 作废该均值（约 150 elec/s 以上就会触发）。`OVERMOD=1` 关圆、六边形夹 iPark。扰动：`DISTURB_S` 抱速等转盘。
 
 ## 构建
 

@@ -39,8 +39,22 @@ W_REF="${W_REF:-40}"
 # Space-separated |elec/s| after spd_on. First write also enables the
 # PI; later writes change only w_ref (no re-seed). Empty keeps W_REF.
 W_REFS="${W_REFS:-}"
+# After the last w_ref hold: keep spd on and watch. Turn the brake
+# dial during this window to score disturbance recovery.
+DISTURB_S="${DISTURB_S:-0}"
+# Same-run load step without a timed beep window:
+#   HOLD_AFTER=1  score, leave CURRENT+spd on, skip reflash
+#   SCORE_ONLY=1  no kick/handover; acc+wrap then reflash
+HOLD_AFTER="${HOLD_AFTER:-0}"
+SCORE_ONLY="${SCORE_ONLY:-0}"
+# 1 = skip Vdc/√3 circle, hexagon-clamp iPark, allow VQMAX up to 7.7 V.
+OVERMOD="${OVERMOD:-0}"
 SLEW_S="${SLEW_S:-0}"
 SLEW_Q16="${SLEW_Q16:-900}"
+# 1 = write SLEW_Q16 at spd_on (before the first w_ref hold).
+APPLY_SLEW="${APPLY_SLEW:-0}"
+# 1 = skip dump_foc_v (the slow end-of-hold foc_v refill). wrap/acc stay.
+SKIP_TRACE="${SKIP_TRACE:-0}"
 PARKOFF_S="${PARKOFF_S:-0}"
 PARKOFF_Q16="${PARKOFF_Q16:-0}"
 VD24_S="${VD24_S:-0}"
@@ -60,10 +74,11 @@ BUS_ABORT_A="${BUS_ABORT_A:-0.50}"
 # ±180° Q15 unwrap aliases above 50 elec/s at this dt — print_spd_step
 # must add full turns against a running speed estimate.
 SPD_STEP_DECIM="${SPD_STEP_DECIM:-200}"
-# vq ceiling (µV). ISR clamps 1.2e6..6.2e6. Empty-load:
-# 3600000 / 5000000 / 6200000. With SPD_S=0 this rises after the 2.4 V
-# baseline. With SPD_S>0 it rises after spd_on so the raised-ceiling
-# window is not 2 s of voltage-limited free-run.
+# vq ceiling (µV). ISR clamps 1.2e6..7.7e6. Empty-load:
+# 3600000 / 5000000 / 6200000. OVERMOD=1 + 7700000 is six-step.
+# With SPD_S=0 this rises after the 2.4 V baseline. With SPD_S>0
+# it rises after spd_on so the raised-ceiling window is not a
+# free-run.
 VQMAX_UV="${VQMAX_UV:-}"
 # Space-separated signed id_ref LSB, applied after VQMAX. 62 ≈ 100 mA.
 # Empty skips. Handover leaves id_ref=0 so the 2.4 V baseline is unchanged.
@@ -92,11 +107,24 @@ reflash_safe() {
   flash_elf
 }
 
+cpu_resume() {
+  ocd -c 'init' -c 'rbp all' -c 'resume' -c 'exit' >/dev/null
+}
+
 require_dap
 report_and_clear_stale_bif
 trap 'motor_off; host_alarm; reflash_safe' EXIT
-echo "== baseline =="
-"$ROOT/scripts/board_check.sh"
+if [[ "${SCORE_ONLY}" == 1 ]]; then
+  echo "== score only — motor should already be holding =="
+  cpu_resume
+  if ! cpu_alive; then
+    echo "SCORE_ONLY: CPU not running after resume" >&2
+    exit 1
+  fi
+else
+  echo "== baseline =="
+  "$ROOT/scripts/board_check.sh"
+fi
 
 # Fast GPIO burst. 50 ms samples alias at ~29 elec/s and cannot tell
 # dither from rotation. 16 reads at 2 ms span about one electrical turn.
@@ -227,10 +255,10 @@ for i,ki in enumerate(ks):
     t.append(ts[i+1]*1000.0); th.append(acc)
 w=[]; j=0
 for i in range(len(t)):
-    while t[i]-t[j]>200.0 and i>j:
+    while t[i]-t[j]>100.0 and i>j:
         j+=1
     dt=(t[i]-t[j])/1000.0
-    w.append(abs(th[i]-th[j])/360.0/dt if dt>0.05 else float('nan'))
+    w.append(abs(th[i]-th[j])/360.0/dt if dt>0.04 else float('nan'))
 lo=w0+0.1*(w1-w0); hi=w0+0.9*(w1-w0)
 def cross(tgt, s):
     for i,v in enumerate(w):
@@ -328,6 +356,8 @@ if acc_f:
     open(acc_f,'w').write(f'{iq_m:.1f}')
 if n < 1000 or abs(iq_m) > 2000 or abs(id_m) > 2000:
     print('  acc GARBAGE — n/sum raced the ISR; ignore this mean, use foc_v')
+if abs(i0_m) > 10:
+    print('  acc GARBAGE — |i0| > 10 mA common-mode; iq/id means are not a score')
 spd=int('''${SPD_ON:-0}''')
 if abs(vq) >= 0.95*ceil or abs(vd) >= 0.95*ceil:
     print('  volt now VOLTAGE-LIMITED — empty-load mean iq is not a current-loop score')
@@ -342,6 +372,52 @@ acc_zero() {
       -c "mww $((ACC + 4)) 0" \
       -c "mww $((ACC + 8)) 0" \
       -c 'exit' >/dev/null
+}
+
+score_live_hold() {
+  local tag="$1" wr="${2:-${W_REF}}"
+  FX=$(sym_addr g_motor_foc_fx)
+  ACC=$(sym_addr g_motor_foc_fx_acc)
+  TR=$(sym_addr g_motor_trace)
+  PROT=$(sym_addr g_motor_pwm_prot)
+  VQMAX_APPLIED=1
+  acc_zero
+  sleep "${SPD_S:-8}"
+  PROT_WORDS=$(read_words "$PROT" 4 | tr '\n' ' ')
+  FX_WORDS=$(read_words "$FX" 9 | tr '\n' ' ')
+  WMEAS=$(read_words "$(sym_addr g_motor_foc_w_meas_eps)" 1)
+  python3 -c "
+pr=[int(x,16) for x in '$PROT_WORDS'.split()]
+fx=[int(x,16) for x in '$FX_WORDS'.split()]
+def s32(u):
+    return u-(1<<32) if u>=(1<<31) else u
+latched=(pr[3]>>16)&0xFF
+w=s32(int('$WMEAS',16))
+print(f'  after {tag} latched={latched}  vq={s32(fx[3])/1e6:.2f} V  vd={s32(fx[2])/1e6:.2f} V  w_meas={w} elec/s')
+if latched or pr[0] or pr[1]:
+    raise SystemExit('protection during '+'$tag')
+if w < 25:
+    raise SystemExit('speed hold stalled during '+'$tag')
+"
+  print_acc
+  dump_ccr
+  wrap_json="$OUT/foc-w${wr}-${tag}.json"
+  mkdir -p "$OUT"
+  arm_wrap 5 20
+  python3 "$ROOT/scripts/trace_dump.py" --no-plot --json "$wrap_json" \
+    -o "$OUT" --elf "$ELF" --cfg "$CFG" >/dev/null 2>&1 || true
+  python3 -c "
+import json
+try:
+    p=json.load(open('$wrap_json'))
+except Exception:
+    raise SystemExit(0)
+net=float(p.get('net_theta_deg') or 0)
+dt=float(p.get('samples',256))*float(p.get('dt_us',1000))/1e6
+wrap=abs(net)/360/dt if dt else float('nan')
+print(f'  wrap score {wrap:.1f} elec/s  after {tag} w_ref={int(\"$wr\")} rotating={p.get(\"rotating\")}')
+"
+  dump_foc_v "$OUT/foc-v-w${wr}-${tag}.json"
 }
 
 # Raise the vq software ceiling. Call after handover. When SPD_ON=1 the
@@ -382,8 +458,61 @@ if i<0.015:
   VQMAX_APPLIED=1
 }
 
+apply_overmod() {
+  if [[ "${OVERMOD}" != 1 ]]; then
+    return 0
+  fi
+  local om
+  om=$(sym_addr g_motor_foc_overmod)
+  echo "  OVERMOD NOW — hexagon clamp, circle off"
+  ocd -c 'init' -c "mwb $om 1" -c 'exit' >/dev/null
+}
+
+# Park slew before a high w_ref. Default 600 Q16 ≈ 183 elec/s; 900 ≈ 275.
+# APPLY_SLEW=1 writes it at spd_on, not after the hold (SLEW_S is too late).
+apply_slew() {
+  if [[ "${APPLY_SLEW:-0}" != 1 ]]; then
+    return 0
+  fi
+  local sl
+  sl=$(sym_addr g_motor_foc_park_slew_q16)
+  python3 -c "
+q=int('$SLEW_Q16')
+print(f'  SLEW NOW — {q} Q16 = {q*20000/65536:.0f} elec/s (Park rate)')
+"
+  ocd -c 'init' -c "mww $sl $SLEW_Q16" -c 'exit' >/dev/null
+}
+
+dump_ccr() {
+  # TIM1 ARR,RCR,CCR1..4,BDTR. lo_win is counts from the peak to the
+  # end of the highest-duty phase's low-side (minus DTG). ADC lead is
+  # 72 by default; if lo_win < lead the sample is not in that window.
+  local words
+  words=$(read_words "$TIM1_ARR" 7 | tr '\n' ' ') || {
+    echo "  TIM1 CCR read failed" >&2
+    return 1
+  }
+  python3 -c "
+w=[int(x,16) for x in '''$words'''.split()]
+if len(w) < 7:
+    raise SystemExit('TIM1 CCR: short read')
+arr, rcr, c1, c2, c3, c4, bdtr = w[:7]
+ccrs = [c1 & 0xFFFF, c2 & 0xFFFF, c3 & 0xFFFF]
+mx, mn = max(ccrs), min(ccrs)
+dtg = bdtr & 0xFF
+win = arr - mx - dtg
+print(f'  TIM1 ARR={arr}  CCR={ccrs[0]}/{ccrs[1]}/{ccrs[2]}  CCR4={c4 & 0xFFFF}  DTG={dtg}  span={mx-mn}  max_ccr={mx}  lo_win={win} counts ({win/48.0:.2f} us)')
+if win < 72:
+    print('  TIM1 lo_win < ADC_LEAD 72 — highest-duty low-side window is thin or gone')
+"
+}
+
 dump_foc_v() {
   local json="$1"
+  if [[ "${SKIP_TRACE:-0}" == 1 ]]; then
+    echo "  skip foc_v dump (SKIP_TRACE=1)"
+    return 0
+  fi
   ocd -c 'init' \
       -c "mwb $((TR + 20)) 0" \
       -c "mwh $((TR + 8)) 0" \
@@ -398,6 +527,29 @@ dump_foc_v() {
   python3 "$ROOT/scripts/trace_dump.py" --no-plot --json "$json" \
     -o "$OUT" --elf "$ELF" --cfg "$CFG" || true
 }
+
+if [[ "${SCORE_ONLY}" == 1 ]]; then
+  if [[ ! -f "$ELF" ]]; then
+    echo "SCORE_ONLY needs $ELF from the HOLD_AFTER build" >&2
+    exit 1
+  fi
+  i=$(read_i)
+  python3 -c "
+i=float('$i')
+print(f'  live bus {i:.3f} A')
+if i < 0.08:
+    raise SystemExit('SCORE_ONLY: bus idle — hold is already off')
+if i > float('$BUS_ABORT_A'):
+    raise SystemExit('SCORE_ONLY: bus current too high')
+"
+  score_live_hold "${SCORE_TAG:-tick4}" "${W_REFS:-$W_REF}"
+  echo
+  echo "== reflashing safe firmware =="
+  trap - EXIT
+  reflash_safe
+  "$ROOT/scripts/board_check.sh"
+  exit 0
+fi
 
 rep=1
 while [[ "$rep" -le "$REPEAT" ]]; do
@@ -791,6 +943,8 @@ print(f'  id_step extreme {over} LSB  final {sum(d[-20:])/20:.0f} LSB')
           SPD_ON=1
           host_beep
           sleep 0.3
+          apply_overmod
+          apply_slew
           apply_vqmax 1
         else
           echo "  SPEED STEP — w_ref ${wr} elec/s, spd stays on (no re-seed)"
@@ -851,6 +1005,7 @@ if w < 25:
         ACC_IQ_FILE="$OUT/.acc_iq_ma"
         export ACC_IQ_FILE
         print_acc
+        dump_ccr
         if [[ "$spd_i" -eq 1 ]]; then
           SPD_IQ_BASE_MA=$(cat "$ACC_IQ_FILE" 2>/dev/null || true)
           export SPD_IQ_BASE_MA
@@ -872,6 +1027,44 @@ print(f'  wrap score {wrap:.1f} elec/s  w_ref={int(\"$wr\")} rotating={p.get(\"r
 "
         prev_wr=$wr
       done
+      if [[ "${DISTURB_S}" -gt 0 ]]; then
+        echo "  DISTURB — hold ${prev_wr} elec/s ${DISTURB_S}s. Turn the brake dial to score recovery."
+        host_beep
+        acc_zero
+        gpio_watch "disturb" "$DISTURB_S"
+        PROT_WORDS=$(read_words "$PROT" 4 | tr '\n' ' ')
+        FX_WORDS=$(read_words "$FX" 9 | tr '\n' ' ')
+        WMEAS=$(read_words "$(sym_addr g_motor_foc_w_meas_eps)" 1)
+        python3 -c "
+pr=[int(x,16) for x in '$PROT_WORDS'.split()]
+fx=[int(x,16) for x in '$FX_WORDS'.split()]
+def s32(u):
+    return u-(1<<32) if u>=(1<<31) else u
+latched=(pr[3]>>16)&0xFF
+w=s32(int('$WMEAS',16))
+print(f'  after disturb latched={latched}  vq={s32(fx[3])/1e6:.2f} V  w_meas={w} elec/s')
+if latched or pr[0] or pr[1]:
+    raise SystemExit('protection after disturb')
+if w < 25:
+    raise SystemExit('speed hold stalled after disturb')
+"
+        print_acc
+        wrap_json="$OUT/foc-w${prev_wr}-disturb-rep${rep}-dir${dir}.json"
+        arm_wrap 5 20
+        python3 "$ROOT/scripts/trace_dump.py" --no-plot --json "$wrap_json" \
+          -o "$OUT" --elf "$ELF" --cfg "$CFG" >/dev/null 2>&1 || true
+        python3 -c "
+import json
+try:
+    p=json.load(open('$wrap_json'))
+except Exception:
+    raise SystemExit(0)
+net=float(p.get('net_theta_deg') or 0)
+dt=float(p.get('samples',256))*float(p.get('dt_us',1000))/1e6
+wrap=abs(net)/360/dt if dt else float('nan')
+print(f'  wrap score {wrap:.1f} elec/s  after disturb w_ref={int(\"$prev_wr\")} rotating={p.get(\"rotating\")}')
+"
+      fi
       if [[ -n "${ID_REFS}" ]]; then
         IDREF=$(sym_addr g_motor_foc_id_ref)
         id_i=0
@@ -1154,6 +1347,12 @@ if not p.get('rotating'):
     raise SystemExit('not rotating after FOC')
 "
     dump_foc_v "$OUT/foc-v-${tag}-dir${dir}.json"
+    if [[ "${HOLD_AFTER}" == 1 ]]; then
+      cpu_resume
+      echo "  HOLD AFTER — CURRENT+spd still on. Turn the dial, then SCORE_ONLY=1."
+      trap - EXIT
+      exit 0
+    fi
     motor_off
     continue
   fi
@@ -1546,6 +1745,12 @@ if not p.get('rotating'):
 "
   dump_foc_v "$OUT/foc-v-${tag}-dir${dir}.json"
 
+  if [[ "${HOLD_AFTER}" == 1 ]]; then
+    cpu_resume
+    echo "  HOLD AFTER — CURRENT+spd still on. Turn the dial, then SCORE_ONLY=1."
+    trap - EXIT
+    exit 0
+  fi
   motor_off
 done
 rep=$((rep + 1))
@@ -1556,3 +1761,4 @@ echo "== reflashing safe firmware =="
 trap - EXIT
 reflash_safe
 "$ROOT/scripts/board_check.sh"
+ocd_stop

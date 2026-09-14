@@ -65,25 +65,79 @@ def sym_addr(elf: Path, name: str) -> int:
     return int(hits[0], 16)
 
 
+def ocd_rpc(cmds: list[str], port: int = 6666, timeout: float = 20.0) -> str:
+    import socket
+
+    payload = "\n".join(c for c in cmds if c not in ("init", "exit"))
+    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
+        s.settimeout(timeout)
+        s.sendall(payload.encode("utf-8") + b"\x1a")
+        data = b""
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+            if b"\x1a" in data:
+                break
+    finally:
+        s.close()
+    return data.split(b"\x1a")[0].decode("utf-8", "replace")
+
+
 def ocd(cfg: Path, cmds: list[str]) -> str:
+    try:
+        return ocd_rpc(cmds)
+    except OSError:
+        pass
     argv = ["openocd", "-f", str(cfg), "-c", "init"]
     for c in cmds:
         argv += ["-c", c]
     argv += ["-c", "exit"]
-    r = subprocess.run(argv, capture_output=True, text=True)
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+    except subprocess.TimeoutExpired as e:
+        def _s(x):
+            if x is None:
+                return ""
+            return x if isinstance(x, str) else x.decode("utf-8", "replace")
+        return _s(e.stdout) + _s(e.stderr) + "\nocd: TIMEOUT 20s\n"
     return r.stdout + r.stderr
 
 
+def _rpc_up(port: int = 6666) -> bool:
+    import socket
+
+    s = socket.socket()
+    s.settimeout(0.2)
+    try:
+        s.connect(("127.0.0.1", port))
+    except OSError:
+        return False
+    finally:
+        s.close()
+    return True
+
+
 def read_words(cfg: Path, addr: int, n: int) -> list[int]:
-    text = ocd(cfg, [f"mdw 0x{addr:08x} {n}"])
+    # Spawn-per-32-word mdw was 16 OpenOCD starts for a 512-word dump.
+    # With a live Tcl RPC, one 128-word chunk is cheap; fall back to 32
+    # only when we have to spawn.
     words: list[int] = []
-    for line in text.splitlines():
-        m = re.match(r"^0x[0-9a-f]+:\s+(.*)$", line)
-        if m:
-            words += [int(x, 16) for x in m.group(1).split()]
+    chunk = 128 if _rpc_up() else 32
+    text_all = ""
+    for off in range(0, n, chunk):
+        take = min(chunk, n - off)
+        text = ocd(cfg, [f"mdw 0x{addr + 4 * off:08x} {take}"])
+        text_all += text
+        for line in text.splitlines():
+            m = re.match(r"^0x[0-9a-f]+:\s+(.*)$", line)
+            if m:
+                words += [int(x, 16) for x in m.group(1).split()]
     if len(words) < n:
         sys.exit(f"read {len(words)} of {n} words at 0x{addr:08x}; "
-                 f"is the probe attached?\n{text[-800:]}")
+                 f"is the probe attached?\n{text_all[-800:]}")
     return words[:n]
 
 

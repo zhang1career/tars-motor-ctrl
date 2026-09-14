@@ -7,3 +7,9 @@ __pycache__
 models/captured/
 
 build/
+
+sim/slprj/
+sim/**/*.mat
+sim/results/
+**/*.lck
+**/*~

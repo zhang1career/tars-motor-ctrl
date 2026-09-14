@@ -480,9 +480,9 @@ uint16_t MotorHall6_FocThetaInterp(uint16_t now)
       }
       if (sum_ticks > 0U)
       {
-        /* Remaining bias is the integer floor of the fractional tick
-         * (~0.5 / sector). n/2 unbiases the mean. */
-        sum_ticks += (uint32_t)s_ft_spd_n / 2U;
+        /* dwell+1 already counts the starting-edge tick. n/2 was a
+         * leftover floor correction and overshot +0.37 tick/sector
+         * (wrap 0.9–1.4% above w_ref, 2026-09-14). */
         s_ft_omega_spd_q8 = (sum_step << 8) / (int32_t)sum_ticks;
       }
       s_ft_have_omega = 1U;
