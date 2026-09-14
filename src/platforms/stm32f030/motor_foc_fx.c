@@ -102,15 +102,18 @@ static uint8_t s_w_ki_div;
  * Kp=3 hunted. Always-on Ki stalled on hall-omega noise (2026-08-29).
  * Band ±8 froze Ki whenever |w_ref−w_meas|>8, so a 5.0 V free-run
  * (~120 elec/s) then hold-80 was P-only: dir0 sat at 61, dir1 at 110
- * (2026-09-13). Band ±40 keeps Ki alive across that capture. Slew 8
- * Seed from w_ref, not the voltage-limited iq at enable. Ki every
- * 20 kHz tick is 156 LSB/(elec/s)/s and hunts above 120 (2026-09-13).
- * /32 is ~5 LSB/(elec/s)/s. Slew /8 is not the bottleneck (2500 vs
- * 5 LSB/s). w_ref max stays under Park slew 183 elec/s. */
+ * (2026-09-13). Band ±40 covers empty-load capture, not a loaded crawl
+ * (tick 4 hold-80: w_meas=22, |ew|=58, Ki off, iq stuck at P+seed).
+ * Band ±120 keeps Ki on from a crawl up to w_ref. /32 is the hunt
+ * damper, not the band. Seed from w_ref, not the voltage-limited iq
+ * at enable. Ki every 20 kHz tick is 156 LSB/(elec/s)/s and hunts
+ * above 120 (2026-09-13). /32 is ~5 LSB/(elec/s)/s. Slew /8 is not
+ * the bottleneck (2500 vs 5 LSB/s). w_ref max stays under Park slew
+ * 183 elec/s. */
 #define FX_W_KP_Q8 384
 #define FX_W_KI_Q8 2
 #define FX_W_FILT_SHIFT 8
-#define FX_W_KI_BAND_EPS 40
+#define FX_W_KI_BAND_EPS 120
 #define FX_W_KI_DIV 32
 #define FX_W_SLEW_DIV 8
 #define FX_W_IQ_FLOOR 12
@@ -336,9 +339,18 @@ static int32_t fx_speed_pi(void)
   w_ref = fx_clamp(w_ref, 0, FX_W_REF_MAX_EPS);
   if (s_spd_was == 0U)
   {
-    /* ~1.25 LSB per elec/s: empty-load 80 elec/s sat near 100 LSB,
-     * not the 197 LSB leftover from a 5.0 V voltage-limited run. */
-    s_iq_slew = fx_clamp((w_ref * 5) / 4, FX_W_IQ_FLOOR, iq_hi);
+    /* Seed from last-tick measured |iq|, not IQ_LSB and not
+     * (w_ref*5)/4. The cap couples the start transient to a compile
+     * constant; the empty-load seed starves a loaded crawl. */
+    {
+      int32_t iq_now = g_motor_foc_fx.iq_lsb;
+
+      if (iq_now < 0)
+      {
+        iq_now = -iq_now;
+      }
+      s_iq_slew = fx_clamp(iq_now, FX_W_IQ_FLOOR, iq_hi);
+    }
     s_w_int_q8 = s_iq_slew << 8;
     s_w_filt_q8 = w_meas << 8;
     s_iq_slew_div = 0U;

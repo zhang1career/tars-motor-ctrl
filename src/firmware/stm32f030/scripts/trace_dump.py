@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import os
 import re
 import struct
 import subprocess
@@ -166,6 +167,8 @@ def main() -> int:
     ap.add_argument("--no-plot", action="store_true")
     ap.add_argument("--json", type=Path,
                     help="also write per-channel statistics for other scripts")
+    ap.add_argument("--csv", type=Path,
+                    help="write the CSV here instead of a timestamped name")
     args = ap.parse_args()
 
     hdr_addr = sym_addr(args.elf, "g_motor_trace")
@@ -220,7 +223,9 @@ def main() -> int:
 
     args.outdir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    csv_path = args.outdir / f"trace-{src_name}-{stamp}.csv"
+    csv_path = args.csv if args.csv else args.outdir / f"trace-{src_name}-{stamp}.csv"
+    if args.csv:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", encoding="utf-8") as f:
         f.write("t_us," + ",".join(labels) + "\n")
         for i, row in enumerate(rows):
@@ -484,7 +489,11 @@ def main() -> int:
         iq = [r[3] * MA_PER_LSB for r in rows]
         sat_frac = sum(1 for s in sat if s != 0) / len(sat)
         vq_hi = max(abs(v) for v in vq)
-        limited = sat_frac >= 0.05 or vq_hi >= 2.28
+        try:
+            ceil_v = int(os.environ["VQMAX_UV"]) / 1e6
+        except (KeyError, ValueError):
+            ceil_v = 2.4
+        limited = vq_hi >= 0.95 * ceil_v
         print()
         print(f"vd         {statistics.mean(vd):+.3f} V   "
               f"[{min(vd):+.3f} .. {max(vd):+.3f}]")

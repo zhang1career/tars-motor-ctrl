@@ -383,9 +383,17 @@ static uint16_t s_ft_anchor;
 static uint16_t s_ft_ticks;
 static uint16_t s_ft_last_ticks[6];
 static int32_t s_ft_omega_q8; /* dest-stair pred; interpolator only */
-static int32_t s_ft_omega_spd_q8; /* 6-sector Σstep/Σticks; speed PI */
+static int32_t s_ft_omega_spd_q8; /* 6-sector Σwidth/Σticks; speed PI */
 static int16_t s_ft_spd_step[6];
 static uint16_t s_ft_spd_ticks[6];
+/* Physical sector widths, Q16. From foc_ang dwell fractions across
+ * the 2026-09-14 speed-hold traces (tick 4/5, both dirs). Stairs are
+ * FocTheta/10923, not raw hall. Sum is 65536. Equal 60° was 10923
+ * and made per-sector ω swing with the 51–68° halls; the mean was
+ * still high because integer tick counts floor. */
+static const uint16_t s_ft_width_q16[6] = {
+    12302U, 9420U, 11316U, 11587U, 9470U, 11441U
+};
 static uint8_t s_ft_spd_n;
 static uint8_t s_ft_spd_i;
 static int16_t s_ft_step;
@@ -439,8 +447,21 @@ uint16_t MotorHall6_FocThetaInterp(uint16_t now)
       {
         s_ft_omega_q8 = om;
       }
-      s_ft_spd_step[s_ft_spd_i] = s_ft_step;
-      s_ft_spd_ticks[s_ft_spd_i] = s_ft_ticks;
+      /* Sign follows the FocTheta stair; magnitude is the calibrated
+       * physical width of the stair we just left. */
+      if (s_ft_step >= 0)
+      {
+        s_ft_spd_step[s_ft_spd_i] = (int16_t)s_ft_width_q16[s_ft_stair];
+      }
+      else
+      {
+        s_ft_spd_step[s_ft_spd_i] = -(int16_t)s_ft_width_q16[s_ft_stair];
+      }
+      /* Inclusive of the starting-edge tick. The counter only advances
+       * while now == anchor, so a raw store drops one tick/sector and
+       * w_meas reads 1.5–3% high vs wrap (2026-09-14). Widths that
+       * still sum to 65536 cannot cancel that. */
+      s_ft_spd_ticks[s_ft_spd_i] = (uint16_t)(s_ft_ticks + 1U);
       s_ft_spd_i++;
       if (s_ft_spd_i >= 6U)
       {
@@ -459,6 +480,9 @@ uint16_t MotorHall6_FocThetaInterp(uint16_t now)
       }
       if (sum_ticks > 0U)
       {
+        /* Remaining bias is the integer floor of the fractional tick
+         * (~0.5 / sector). n/2 unbiases the mean. */
+        sum_ticks += (uint32_t)s_ft_spd_n / 2U;
         s_ft_omega_spd_q8 = (sum_step << 8) / (int32_t)sum_ticks;
       }
       s_ft_have_omega = 1U;

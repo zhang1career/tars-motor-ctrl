@@ -49,8 +49,10 @@ uint16_t MotorHall6_FocTheta(void);
 uint16_t MotorHall6_FocThetaInterp(uint16_t now);
 
 /* Signed Q16 counts per tick, ×256. One electrical turn of
- * Σstep/Σticks, not the interpolator's dest-stair predictor.
- * 0 if no sector time yet. */
+ * Σ(calibrated sector width)/Σ(ticks + 1 + n/2), not the
+ * interpolator's dest-stair predictor. +1 is the starting-edge
+ * tick the dwell counter drops; n/2 unbiases the integer floor.
+ * Widths from 2026-09-14 foc_ang dwell. 0 if no sector time yet. */
 int32_t MotorHall6_FocOmegaQ8(void);
 
 /* Phase that hall6 leaves open: 0=U 1=V 2=W, or 0xFF if none. */

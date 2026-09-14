@@ -5,8 +5,9 @@
 # No IMAX raise. Empty-load second-scale mean iq is a voltage-limit point,
 # not a current-loop score. Score the loop from HO_STEP / STEP transients.
 # REPEAT=N reruns the whole DIRS loop (scatter on 2.4 / 3.6).
-# SPD_S / W_REF: after the 2.4 V baseline, speed PI holds |elec/s|
-# so vq can leave the ceiling. Do not raise vq on the same beep.
+# SPD_S / W_REF: after the 2.4 V baseline, enable the speed PI first.
+# VQMAX_UV then raises the ceiling under a closed speed loop. Do not
+# sit at full iq on a raised ceiling, then turn the PI on.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,6 +36,9 @@ BASE_VD24="${BASE_VD24:-0}"
 VQ36_S="${VQ36_S:-0}"
 SPD_S="${SPD_S:-0}"
 W_REF="${W_REF:-40}"
+# Space-separated |elec/s| after spd_on. First write also enables the
+# PI; later writes change only w_ref (no re-seed). Empty keeps W_REF.
+W_REFS="${W_REFS:-}"
 SLEW_S="${SLEW_S:-0}"
 SLEW_Q16="${SLEW_Q16:-900}"
 PARKOFF_S="${PARKOFF_S:-0}"
@@ -46,11 +50,20 @@ REPEAT="${REPEAT:-1}"
 RETRIES="${RETRIES:-3}"
 OUT="${OUT:-$BENCH_ROOT/../../../models/captured}"
 IQ_LSB="${IQ_LSB:-186}"   # MOTOR_FOC_IQ_LSB; 186 = 300 mA / 1.617 mA
-# Bus abort. Raise only with IQ_LSB: a loaded high-iq run draws more bus
-# current with nothing wrong. Phase OCP (1484 LSB) still backs this up.
-BUS_ABORT_A="${BUS_ABORT_A:-0.40}"
-# After the 2.4 V handover baseline, raise the vq ceiling (µV). ISR clamps
-# 1.2e6..6.2e6. Empty-load: 3600000 / 5000000 / 6200000.
+# Bus abort. Same threshold everywhere (handover, vqmax, foc_rotating).
+# Tick 5 / 140 elec/s is 0.44 A of real mechanical power, not a stall.
+# 0.40 swallowed that on foc_rotating (|| true) and tripped apply_vqmax.
+# Stall is still elec<1 && i>0.15 and w_meas<25. Phase OCP stays 1484 LSB.
+BUS_ABORT_A="${BUS_ABORT_A:-0.50}"
+# On a w_ref step (not the first enable), arm a foc_ang oneshot at this
+# decimation. 200 at 20 kHz is 10 ms/sample, 2.56 s window.
+# ±180° Q15 unwrap aliases above 50 elec/s at this dt — print_spd_step
+# must add full turns against a running speed estimate.
+SPD_STEP_DECIM="${SPD_STEP_DECIM:-200}"
+# vq ceiling (µV). ISR clamps 1.2e6..6.2e6. Empty-load:
+# 3600000 / 5000000 / 6200000. With SPD_S=0 this rises after the 2.4 V
+# baseline. With SPD_S>0 it rises after spd_on so the raised-ceiling
+# window is not 2 s of voltage-limited free-run.
 VQMAX_UV="${VQMAX_UV:-}"
 # Space-separated signed id_ref LSB, applied after VQMAX. 62 ≈ 100 mA.
 # Empty skips. Handover leaves id_ref=0 so the 2.4 V baseline is unchanged.
@@ -149,6 +162,95 @@ arm_wrap() {
   sleep 0.35
 }
 
+# One-shot. Mode 1. Host dumps after the buffer fills (depth*decim/20 kHz).
+arm_oneshot() {
+  local src="$1" decim="${2:-200}"
+  ocd -c 'init' \
+      -c "mwb $((TR + 20)) 0" \
+      -c "mwh $((TR + 8)) 0" \
+      -c "mwh $((TR + 10)) $decim" \
+      -c "mwh $((TR + 12)) 0" \
+      -c "mww $((TR + 16)) 0" \
+      -c "mwb $((TR + 21)) 0" \
+      -c "mwb $((TR + 22)) $src" \
+      -c "mwb $((TR + 20)) 1" \
+      -c 'exit' >/dev/null
+}
+
+print_spd_step() {
+  local csv="$1" w0="$2" w1="$3"
+  python3 -c "
+import csv, os
+p='$csv'
+if not p or not os.path.isfile(p):
+    print('  spd_step: no CSV')
+    raise SystemExit(0)
+rows=list(csv.DictReader(open(p)))
+if len(rows)<20 or 'foc_ip_q15' not in rows[0]:
+    print(f'  spd_step: short n={len(rows)}')
+    raise SystemExit(0)
+DEG=360/32768.0
+w0=float('$w0'); w1=float('$w1')
+sg=1.0 if w1>=w0 else -1.0
+vals=[int(r['foc_ip_q15']) for r in rows]
+ts=[float(r['t_us'])/1e6 for r in rows]
+d0=[]; dts=[]
+for a,b,t0,t1 in zip(vals,vals[1:],ts,ts[1:]):
+    d=(b-a)*DEG
+    while d>180.0: d-=360.0
+    while d<-180.0: d+=360.0
+    d0.append(d); dts.append(t1-t0)
+# decim 200 is 10 ms: 80 elec/s already travels 288°. ±180° unwrap
+# aliases to ~20 elec/s. Viterbi picks the wrap count whose speed
+# starts at w0, ends at w1, and does not jump between samples.
+K=list(range(-3,4)); n=len(d0); inf=1e18
+def spd(i,k):
+    return (d0[i]+k*360.0)/360.0/dts[i]
+dp=[[inf]*len(K) for _ in range(n)]
+prv=[[-1]*len(K) for _ in range(n)]
+for ki,k in enumerate(K):
+    dp[0][ki]=abs(abs(spd(0,k))-w0)
+for i in range(1,n):
+    for ki,k in enumerate(K):
+        s=spd(i,k)
+        for kj in range(len(K)):
+            c=dp[i-1][kj]+abs(s-spd(i-1,K[kj]))
+            if c<dp[i][ki]:
+                dp[i][ki]=c; prv[i][ki]=kj
+last=min(range(len(K)), key=lambda ki: dp[-1][ki]+2*abs(abs(spd(n-1,K[ki]))-w1))
+ks=[0]*n; ks[-1]=last
+for i in range(n-1,0,-1):
+    ks[i-1]=prv[i][ks[i]]
+acc=0.0; t=[0.0]; th=[0.0]
+for i,ki in enumerate(ks):
+    acc+=d0[i]+K[ki]*360.0
+    t.append(ts[i+1]*1000.0); th.append(acc)
+w=[]; j=0
+for i in range(len(t)):
+    while t[i]-t[j]>200.0 and i>j:
+        j+=1
+    dt=(t[i]-t[j])/1000.0
+    w.append(abs(th[i]-th[j])/360.0/dt if dt>0.05 else float('nan'))
+lo=w0+0.1*(w1-w0); hi=w0+0.9*(w1-w0)
+def cross(tgt, s):
+    for i,v in enumerate(w):
+        if v==v and s*(v-tgt)>=0:
+            return i
+    return None
+i10=cross(lo, sg); i90=cross(hi, sg)
+valid=[x for x in w if x==x]
+print(f'  spd_step csv={p} n={len(w)}  {int(w0)}→{int(w1)} elec/s')
+w0v=w[0] if w[0]==w[0] else float('nan')
+print(f'  spd_step window[0]={w0v:.1f}  window[-1]={w[-1]:.1f}  peak={max(valid):.1f}')
+if i10 is not None and i90 is not None and t[i90]>=t[i10]:
+    print(f'  spd_step 10-90% {t[i90]-t[i10]:.0f} ms  (t10={t[i10]:.0f} t90={t[i90]:.0f})')
+    over=max(valid) if sg>0 else min(valid)
+    print(f'  spd_step extreme {over:.1f} elec/s  overshoot {sg*(over-w1):+.1f}')
+else:
+    print('  spd_step no 10-90% cross — window shorter than the rise or no motion')
+"
+}
+
 foc_rotating() {
   local ang fx a b fa fb i t0 t1
   ang=$(sym_addr g_motor_angle)
@@ -183,11 +285,17 @@ if i < 0.008:
 "
 }
 
-# Second-scale acc mean is the empty-load voltage-limit point. Label it.
+# acc / n mean. Compare |vq|,|vd| to the live ceiling, not 2.28 V.
+# T = Kt·iq with Kt = 1.5·p·λ = 1.5·4·0.0063 (mc_params).
 print_acc() {
-  local acc_words fx_words
+  local acc_words fx_words ceil_uv
   acc_words=$(read_words "$ACC" 9 | tr '\n' ' ')
   fx_words=$(read_words "$FX" 9 | tr '\n' ' ')
+  if [[ "${VQMAX_APPLIED:-0}" == 1 && -n "${VQMAX_UV}" ]]; then
+    ceil_uv=$VQMAX_UV
+  else
+    ceil_uv=2400000
+  fi
   echo "  acc words $acc_words"
   python3 -c "
 w=[int(x,16) for x in '''$acc_words'''.split()]
@@ -196,22 +304,82 @@ def s32(u):
     return u-(1<<32) if u>=(1<<31) else u
 n=w[2]
 lsb=1.617
+kt=0.0378
 id_m=s32(w[0])/n*lsb if n else 0
 iq_m=s32(w[1])/n*lsb if n else 0
 i0_m=s32(w[8])/n*lsb if n and len(w)>8 else 0
+t_nm=kt*iq_m/1000.0
 vd=s32(fx[2])/1e6
 vq=s32(fx[3])/1e6
 sat=(fx[8]>>8)&0xFF
-print(f'  acc n={n}  id={id_m:+.1f} mA  iq={iq_m:+.1f} mA  i0={i0_m:+.1f} mA')
-print(f'  volt now vd={vd:+.2f} V  vq={vq:.2f} V  sat={sat}')
-if abs(iq_m) > 400 or abs(id_m) > 400:
+ceil=int('$ceil_uv')/1e6
+print(f'  acc n={n}  id={id_m:+.1f} mA  iq={iq_m:+.1f} mA  i0={i0_m:+.1f} mA  T={t_nm:+.4f} N·m')
+print(f'  volt now vd={vd:+.2f} V  vq={vq:.2f} V  sat={sat}  ceil={ceil:.2f} V')
+base='''${SPD_IQ_BASE_MA:-}'''
+if base:
+    d=iq_m-float(base)
+    print(f'  delta vs first-hold  Δiq={d:+.1f} mA  ΔT={kt*d/1000:+.4f} N·m')
+t4='''${TICK4_IQ_MA:-}'''
+if t4:
+    d=iq_m-float(t4)
+    print(f'  delta vs tick4       Δiq={d:+.1f} mA  ΔT={kt*d/1000:+.4f} N·m')
+acc_f='''${ACC_IQ_FILE:-}'''
+if acc_f:
+    open(acc_f,'w').write(f'{iq_m:.1f}')
+if n < 1000 or abs(iq_m) > 2000 or abs(id_m) > 2000:
     print('  acc GARBAGE — n/sum raced the ISR; ignore this mean, use foc_v')
 spd=int('''${SPD_ON:-0}''')
-if abs(vq) >= 2.28 or abs(vd) >= 2.28 or sat:
+if abs(vq) >= 0.95*ceil or abs(vd) >= 0.95*ceil:
     print('  volt now VOLTAGE-LIMITED — empty-load mean iq is not a current-loop score')
 elif spd:
     print('  volt now SPEED-HELD — vq off the ceiling; iq may be a current-loop score')
 "
+}
+
+acc_zero() {
+  ocd -c 'init' \
+      -c "mww $ACC 0" \
+      -c "mww $((ACC + 4)) 0" \
+      -c "mww $((ACC + 8)) 0" \
+      -c 'exit' >/dev/null
+}
+
+# Raise the vq software ceiling. Call after handover. When SPD_ON=1 the
+# PI is already holding, so the settle is not a full-iq free-run.
+apply_vqmax() {
+  local settle="${1:-2}"
+  if [[ -z "${VQMAX_UV}" || "${VQMAX_APPLIED:-0}" == 1 ]]; then
+    return 0
+  fi
+  VQMAX=$(sym_addr g_motor_foc_vq_max_uv)
+  if [[ "${SPD_ON:-0}" == 1 ]]; then
+    echo "  VQMAX NOW — ${VQMAX_UV} uV (ceiling after spd_on)"
+  else
+    echo "  VQMAX NOW — ${VQMAX_UV} uV (ceiling only, interp already locked)"
+  fi
+  ocd -c 'init' -c "mww $VQMAX $VQMAX_UV" -c 'exit' >/dev/null
+  host_beep
+  sleep "$settle"
+  i=$(read_i)
+  PROT_WORDS=$(read_words "$PROT" 4 | tr '\n' ' ')
+  FX_WORDS=$(read_words "$FX" 9 | tr '\n' ' ')
+  python3 -c "
+i=float('$i')
+pr=[int(x,16) for x in '$PROT_WORDS'.split()]
+fx=[int(x,16) for x in '$FX_WORDS'.split()]
+def s32(u):
+    return u-(1<<32) if u>=(1<<31) else u
+latched=(pr[3]>>16)&0xFF
+sw=pr[0]; bkin=pr[1]
+print(f'  after vqmax={int(\"$VQMAX_UV\")} latched={latched} sw={sw} bkin={bkin}  vq={s32(fx[3])/1e6:.2f} V  vd={s32(fx[2])/1e6:.2f} V  bus {i:.3f} A')
+if latched or sw or bkin:
+    raise SystemExit('protection after vqmax')
+if i>float('$BUS_ABORT_A'):
+    raise SystemExit('bus current too high after vqmax')
+if i<0.015:
+    raise SystemExit('bus idle after vqmax')
+"
+  VQMAX_APPLIED=1
 }
 
 dump_foc_v() {
@@ -458,33 +626,14 @@ if latched or sw or bkin:
 if i<0.015:
     raise SystemExit('bus idle at base')
 "
-    if [[ -n "${VQMAX_UV}" ]]; then
-      VQMAX=$(sym_addr g_motor_foc_vq_max_uv)
-      echo "  VQMAX NOW — ${VQMAX_UV} uV (ceiling only, interp already locked)"
-      ocd -c 'init' -c "mww $VQMAX $VQMAX_UV" -c 'exit' >/dev/null
-      host_beep
-      sleep 2
-      i=$(read_i)
-      PROT_WORDS=$(read_words "$PROT" 4 | tr '\n' ' ')
-      FX_WORDS=$(read_words "$FX" 9 | tr '\n' ' ')
-      python3 -c "
-i=float('$i')
-pr=[int(x,16) for x in '$PROT_WORDS'.split()]
-fx=[int(x,16) for x in '$FX_WORDS'.split()]
-def s32(u):
-    return u-(1<<32) if u>=(1<<31) else u
-latched=(pr[3]>>16)&0xFF
-sw=pr[0]; bkin=pr[1]
-print(f'  after vqmax={int(\"$VQMAX_UV\")} latched={latched} sw={sw} bkin={bkin}  vq={s32(fx[3])/1e6:.2f} V  vd={s32(fx[2])/1e6:.2f} V  bus {i:.3f} A')
-if latched or sw or bkin:
-    raise SystemExit('protection after vqmax')
-if i>float('$BUS_ABORT_A'):
-    raise SystemExit('bus current too high after vqmax')
-if i<0.015:
-    raise SystemExit('bus idle after vqmax')
-"
+    VQMAX_APPLIED=0
+    SPD_ON=0
+    # Speed loop first: do not raise the ceiling onto a full-iq free-run.
+    if [[ -n "${VQMAX_UV}" && "${SPD_S}" -eq 0 ]]; then
+      apply_vqmax 2
     fi
-    if [[ -n "${ID_REFS}" || -n "${PARK_OFFS}" ]]; then
+    # With SPD_S, id_ref is applied after the speed hold (field weakening).
+    if [[ "${SPD_S}" -eq 0 && ( -n "${ID_REFS}" || -n "${PARK_OFFS}" ) ]]; then
       IDREF=$(sym_addr g_motor_foc_id_ref)
       POFF=$(sym_addr g_motor_foc_park_off_q16)
       park_list="${PARK_OFFS:-keep}"
@@ -630,16 +779,51 @@ print(f'  id_step extreme {over} LSB  final {sum(d[-20:])/20:.0f} LSB')
     if [[ "${SPD_S}" -gt 0 ]]; then
       SPD=$(sym_addr g_motor_foc_spd_on)
       WREF=$(sym_addr g_motor_foc_w_ref_eps)
-      echo "  SPEED NOW — hold ${W_REF} elec/s, iq_ref from speed PI"
-      ocd -c 'init' -c "mww $WREF $W_REF" -c "mwb $SPD 1" -c 'exit' >/dev/null
-      host_beep
-      SPD_ON=1
-      gpio_watch spd "$SPD_S"
-      PROT_WORDS=$(read_words "$PROT" 4 | tr '\n' ' ')
-      FX_WORDS=$(read_words "$FX" 9 | tr '\n' ' ')
-      WMEAS=$(read_words "$(sym_addr g_motor_foc_w_meas_eps)" 1)
-      IQREF=$(read_words "$(sym_addr g_motor_foc_iq_ref)" 1)
-      python3 -c "
+      spd_first=1
+      spd_i=0
+      SPD_IQ_BASE_MA=
+      for wr in ${W_REFS:-$W_REF}; do
+        spd_i=$((spd_i + 1))
+        if [[ "$spd_first" == 1 ]]; then
+          echo "  SPEED NOW — hold ${wr} elec/s, iq_ref from speed PI"
+          ocd -c 'init' -c "mww $WREF $wr" -c "mwb $SPD 1" -c 'exit' >/dev/null
+          spd_first=0
+          SPD_ON=1
+          host_beep
+          sleep 0.3
+          apply_vqmax 1
+        else
+          echo "  SPEED STEP — w_ref ${wr} elec/s, spd stays on (no re-seed)"
+          echo "  SPD STEP TRACE — foc_ang oneshot decim ${SPD_STEP_DECIM}"
+          arm_oneshot 5 "$SPD_STEP_DECIM"
+          ocd -c 'init' -c "mww $WREF $wr" -c 'exit' >/dev/null
+          host_beep
+        fi
+        acc_zero
+        mkdir -p "$OUT"
+        if [[ "$spd_i" -gt 1 ]]; then
+          # gpio_watch steps in 2 s integers. Dump as soon as the oneshot
+          # is full — do not wait SPD_S, and do not pick ls -t leftovers.
+          fill_s=$(python3 -c "import math; t=256*int('$SPD_STEP_DECIM')/20000+0.3; print(int(math.ceil(t/2.0)*2))")
+          gpio_watch "spd${wr}step" "$fill_s"
+          step_json="$OUT/foc-w${prev_wr}-to-${wr}-step-rep${rep}-dir${dir}.json"
+          step_csv="$OUT/foc-w${prev_wr}-to-${wr}-step-rep${rep}-dir${dir}.csv"
+          python3 "$ROOT/scripts/trace_dump.py" --no-plot --json "$step_json" \
+            --csv "$step_csv" -o "$OUT" --elf "$ELF" --cfg "$CFG" || true
+          print_spd_step "$step_csv" "$prev_wr" "$wr"
+          remain=$(python3 -c "print(max(0, int('$SPD_S')-int('$fill_s')))")
+          if [[ "$remain" -gt 0 ]]; then
+            acc_zero
+            gpio_watch "spd${wr}" "$remain"
+          fi
+        else
+          gpio_watch "spd${wr}" "$SPD_S"
+        fi
+        PROT_WORDS=$(read_words "$PROT" 4 | tr '\n' ' ')
+        FX_WORDS=$(read_words "$FX" 9 | tr '\n' ' ')
+        WMEAS=$(read_words "$(sym_addr g_motor_foc_w_meas_eps)" 1)
+        IQREF=$(read_words "$(sym_addr g_motor_foc_iq_ref)" 1)
+        python3 -c "
 pr=[int(x,16) for x in '$PROT_WORDS'.split()]
 fx=[int(x,16) for x in '$FX_WORDS'.split()]
 def s32(u):
@@ -648,13 +832,100 @@ latched=(pr[3]>>16)&0xFF
 sw=pr[0]; bkin=pr[1]
 w=s32(int('$WMEAS',16))
 iqref=s32(int('$IQREF',16))
-print(f'  after spd latched={latched} sw={sw} bkin={bkin}  vq={s32(fx[3])/1e6:.2f} V  vd={s32(fx[2])/1e6:.2f} V  w_meas={w} elec/s  iq_ref={iqref} LSB')
+kt=0.0378
+t_nm=kt*iqref*1.617/1000.0
+print(f'  after w_ref={int(\"$wr\")} latched={latched} sw={sw} bkin={bkin}  vq={s32(fx[3])/1e6:.2f} V  vd={s32(fx[2])/1e6:.2f} V  w_meas={w} elec/s  iq_ref={iqref} LSB  T_ref={t_nm:+.4f} N·m')
 print('  w_meas is the loop meter — wrap (foc_ang net/dt) is the score')
 if latched or sw or bkin:
     raise SystemExit('protection after spd')
 if w < 25:
     raise SystemExit('speed hold stalled')
 "
+        case "$wr" in
+          80) TICK4_IQ_MA=400 ;;
+          130) TICK4_IQ_MA=457 ;;
+          140) TICK4_IQ_MA=452 ;;
+          *) TICK4_IQ_MA= ;;
+        esac
+        export TICK4_IQ_MA
+        ACC_IQ_FILE="$OUT/.acc_iq_ma"
+        export ACC_IQ_FILE
+        print_acc
+        if [[ "$spd_i" -eq 1 ]]; then
+          SPD_IQ_BASE_MA=$(cat "$ACC_IQ_FILE" 2>/dev/null || true)
+          export SPD_IQ_BASE_MA
+        fi
+        wrap_json="$OUT/foc-w${wr}-rep${rep}-s${spd_i}-dir${dir}.json"
+        arm_wrap 5 20
+        python3 "$ROOT/scripts/trace_dump.py" --no-plot --json "$wrap_json" \
+          -o "$OUT" --elf "$ELF" --cfg "$CFG" >/dev/null 2>&1 || true
+        python3 -c "
+import json
+try:
+    p=json.load(open('$wrap_json'))
+except Exception:
+    raise SystemExit(0)
+net=float(p.get('net_theta_deg') or 0)
+dt=float(p.get('samples',256))*float(p.get('dt_us',1000))/1e6
+wrap=abs(net)/360/dt if dt else float('nan')
+print(f'  wrap score {wrap:.1f} elec/s  w_ref={int(\"$wr\")} rotating={p.get(\"rotating\")}')
+"
+        prev_wr=$wr
+      done
+      if [[ -n "${ID_REFS}" ]]; then
+        IDREF=$(sym_addr g_motor_foc_id_ref)
+        id_i=0
+        last_wr=$(echo ${W_REFS:-$W_REF} | awk '{print $NF}')
+        for idr in $ID_REFS; do
+          id_i=$((id_i + 1))
+          idr_u=$(python3 -c "print(int('$idr') & 0xFFFFFFFF)")
+          python3 -c "print(f'  ID REF NOW — {int(\"$idr\")} LSB = {int(\"$idr\")*1.617:+.0f} mA  (spd stays on, w_ref={int(\"$last_wr\")})')"
+          ocd -c 'init' -c "mww $IDREF $idr_u" -c 'exit' >/dev/null
+          host_beep
+          acc_zero
+          gpio_watch "id${idr}" "$ID_REF_S"
+          i=$(read_i)
+          PROT_WORDS=$(read_words "$PROT" 4 | tr '\n' ' ')
+          FX_WORDS=$(read_words "$FX" 9 | tr '\n' ' ')
+          WMEAS=$(read_words "$(sym_addr g_motor_foc_w_meas_eps)" 1)
+          IQREF=$(read_words "$(sym_addr g_motor_foc_iq_ref)" 1)
+          python3 -c "
+pr=[int(x,16) for x in '$PROT_WORDS'.split()]
+fx=[int(x,16) for x in '$FX_WORDS'.split()]
+def s32(u):
+    return u-(1<<32) if u>=(1<<31) else u
+latched=(pr[3]>>16)&0xFF
+sw=pr[0]; bkin=pr[1]
+w=s32(int('$WMEAS',16))
+iqref=s32(int('$IQREF',16))
+i=float('$i')
+print(f'  after id_ref={int(\"$idr\")} latched={latched} sw={sw} bkin={bkin}  vq={s32(fx[3])/1e6:.2f} V  vd={s32(fx[2])/1e6:.2f} V  w_meas={w} elec/s  iq_ref={iqref} LSB  bus {i:.3f} A')
+if latched or sw or bkin:
+    raise SystemExit('protection after id_ref')
+if w < 25:
+    raise SystemExit('speed hold stalled after id_ref')
+if i > 0.55:
+    raise SystemExit('bus current too high after id_ref')
+"
+          print_acc
+          wrap_json="$OUT/foc-w${last_wr}-id${idr}-rep${rep}-s${id_i}-dir${dir}.json"
+          arm_wrap 5 20
+          python3 "$ROOT/scripts/trace_dump.py" --no-plot --json "$wrap_json" \
+            -o "$OUT" --elf "$ELF" --cfg "$CFG" >/dev/null 2>&1 || true
+          python3 -c "
+import json
+try:
+    p=json.load(open('$wrap_json'))
+except Exception:
+    raise SystemExit(0)
+net=float(p.get('net_theta_deg') or 0)
+dt=float(p.get('samples',256))*float(p.get('dt_us',1000))/1e6
+wrap=abs(net)/360/dt if dt else float('nan')
+print(f'  wrap score {wrap:.1f} elec/s  w_ref={int(\"$last_wr\")} id_ref={int(\"$idr\")} rotating={p.get(\"rotating\")}')
+"
+        done
+        ocd -c 'init' -c "mww $IDREF 0" -c 'exit' >/dev/null
+      fi
     fi
     if [[ "${INTERP_S}" -gt 0 ]]; then
       IP=$(sym_addr g_motor_foc_interp)
@@ -860,7 +1131,7 @@ if latched or sw or bkin:
         echo "  skip parkoff — previous step did not hold"
       fi
     fi
-    foc_rotating || true
+    foc_rotating
     ocd -c 'init' -c "mww $((ACC + 8)) 0" -c 'exit' >/dev/null
     sleep 2
     print_acc
@@ -916,7 +1187,7 @@ if i<0.015:
 
   if [[ "${SKIP_DPWM:-0}" == 1 ]]; then
     echo "  skip DPWMMIN"
-    foc_rotating || true
+    foc_rotating
     ACC=$(sym_addr g_motor_foc_fx_acc)
     ocd -c 'init' -c "mww $((ACC + 8)) 0" -c 'exit' >/dev/null
     sleep 2
@@ -1255,7 +1526,7 @@ if latched or sw or bkin:
   else
     echo "  skip id — $tag did not hold"
   fi
-  foc_rotating || true
+  foc_rotating
 
   ACC=$(sym_addr g_motor_foc_fx_acc)
   ocd -c 'init' -c "mww $((ACC + 8)) 0" -c 'exit' >/dev/null
