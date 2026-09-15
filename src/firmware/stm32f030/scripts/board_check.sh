@@ -149,19 +149,22 @@ for ch, name in ((1, "U"), (2, "V"), (3, "W")):
 fails = []
 if not 3.15 <= vdda <= 3.45:
     fails.append(f"VDDA {vdda:.3f} V outside 3.15..3.45")
-if not 10.5 <= vbus <= 13.0:
-    # The LM339 comparators run off +12 V while their open-drain outputs pull up
-    # to the probe-fed +3V3. With 12 V absent the comparators are dead and both
-    # fault lines float high, so they read "no fault" while protecting nothing.
-    fails.append(f"bus {vbus:.2f} V outside 10.5..13.0 -- with 12 V absent the "
-                 f"LM339 window comparators are unpowered, so nFAULT/nOTEMP "
-                 f"reading high proves nothing")
+if not 10.5 <= vbus <= 16.5:
+    # LM339s ride the motor bus. Below ~10.5 they are dead and both
+    # fault lines float high, so "no fault" proves nothing. 16.5 is
+    # under the UCC27211 17 V recommended VDD (abs max 20 V).
+    fails.append(f"bus {vbus:.2f} V outside 10.5..16.5 -- with the bus absent "
+                 f"the LM339 window comparators are unpowered, so "
+                 f"nFAULT/nOTEMP reading high proves nothing")
 if not skip_adc:
-    if vboost > 14.0:
-        fails.append(f"V_BOOST {vboost:.2f} V - charge pump is running, and the "
-                     f"half-bridge boards have no HB-HS clamp (spec 9.5.4)")
-    if not 10.0 <= vboost <= 14.0:
-        fails.append(f"V_BOOST {vboost:.2f} V outside 10.0..14.0")
+    if vboost > vbus + 1.5:
+        fails.append(f"V_BOOST {vboost:.2f} V is {vboost - vbus:+.2f} above "
+                     f"the bus — charge pump is running, and the half-bridge "
+                     f"boards have no HB-HS clamp (spec 9.5.4)")
+    if vboost > 17.0:
+        fails.append(f"V_BOOST {vboost:.2f} V above UCC27211 17 V recommended")
+    if not 10.0 <= vboost <= 17.0:
+        fails.append(f"V_BOOST {vboost:.2f} V outside 10.0..17.0")
 bkin_af = (moder_a >> 12) & 3
 bke = (bdtr >> 12) & 1
 bif = (sr >> 7) & 1

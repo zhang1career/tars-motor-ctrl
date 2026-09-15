@@ -89,9 +89,9 @@ extern volatile uint8_t g_motor_foc_id_on;
  * is field weakening. Do not add this to g_motor_foc_fx — mode is
  * at byte +32 and the handover poll uses that offset. */
 extern volatile int32_t g_motor_foc_id_ref;
-/* vq ceiling in µV. Handover 2.4e6. ISR clamps 1.2e6..7.7e6.
- * 6.2e6 is still under the Vdc/√3 circle. 7.7e6 is six-step
- * fundamental (~2 Vdc/π) and needs g_motor_foc_overmod=1. */
+/* vq ceiling in µV. Handover 2.4e6. ISR clamps 1.2e6..10e6.
+ * 12 V linear is 6.58e6; 15 V linear is Vdc/√3 ≈ 8.66e6.
+ * Six-step is ~2 Vdc/π and needs g_motor_foc_overmod=1. */
 extern volatile int32_t g_motor_foc_vq_max_uv;
 /* |vd| ceiling in µV. Handover 2.4e6. ISR clamps 1.2e6..2.4e6. */
 extern volatile int32_t g_motor_foc_vd_max_uv;
@@ -110,15 +110,15 @@ extern volatile int32_t g_motor_foc_park_off_q16;
  * Empty-load free-run is voltage-limited; hold below that so vq
  * leaves the ceiling and the current loop can regulate. */
 extern volatile uint8_t g_motor_foc_spd_on;
-/* |electrical rev/s|. ISR clamps 0..180 (Park slew 183). Sign
- * ignored; +iq still follows hall6. Wrap (foc_ang net/dt) is the
- * score; w_meas is the loop meter. */
+/* |electrical rev/s|. ISR clamps 0..260. Default Park 600 Q16 is
+ * 183 elec/s — raise g_motor_foc_park_slew_q16 before asking above
+ * that. Sign ignored; +iq still follows hall6. Wrap is the score. */
 extern volatile int32_t g_motor_foc_w_ref_eps;
 /* |electrical rev/s| from FocOmegaQ8, updated every CURRENT tick. */
 extern volatile int32_t g_motor_foc_w_meas_eps;
 /* 1 = skip the Vdc/√3 circle and clamp iPark to the hexagon
  * (span ≤ Vdc). Linear 6.58 V already holds 174 @ 175; this is
- * only past that. sat does not rewind Ki. */
+ * only past that. Hexagon sat rewinds Ki to the delivered vd/vq. */
 extern volatile uint8_t g_motor_foc_overmod;
 
 void MotorFocFx_Init(void);

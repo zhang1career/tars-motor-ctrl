@@ -109,8 +109,8 @@ static uint8_t s_w_ki_div;
  * damper, not the band. Seed from w_ref, not the voltage-limited iq
  * at enable. Ki every 20 kHz tick is 156 LSB/(elec/s)/s and hunts
  * above 120 (2026-09-13). /32 is ~5 LSB/(elec/s)/s. Slew /8 is not
- * the bottleneck (2500 vs 5 LSB/s). w_ref max stays under Park slew
- * 183 elec/s. */
+ * the bottleneck (2500 vs 5 LSB/s). Host Park slew must clear this
+ * ceiling (APPLY_SLEW); default 600 Q16 is still 183 elec/s. */
 #define FX_W_KP_Q8 384
 #define FX_W_KI_Q8 2
 #define FX_W_FILT_SHIFT 8
@@ -119,7 +119,7 @@ static uint8_t s_w_ki_div;
 #define FX_W_SLEW_DIV 8
 #define FX_W_IQ_FLOOR 12
 #define FX_W_REF_DEFAULT_EPS 40
-#define FX_W_REF_MAX_EPS 180
+#define FX_W_REF_MAX_EPS 260
 
 volatile motor_foc_fx_acc_t g_motor_foc_fx_acc;
 
@@ -316,9 +316,9 @@ static int32_t fx_vq_max_uv(void)
   {
     m = 1200000;
   }
-  else if (m > 7700000)
+  else if (m > 10000000)
   {
-    m = 7700000;
+    m = 10000000;
   }
   return m;
 }
@@ -412,6 +412,32 @@ static int32_t fx_vd_max_uv(void)
     m = 2400000;
   }
   return m;
+}
+
+/* Hexagon sat: recover the vd/vq that actually went out and rewind
+ * both current-loop integrators (I := v_sat − Kp·e). Linear mode
+ * already clamps Ki to vq_hi/vd_hi, which matches the circle when
+ * VQMAX is Vdc/√3. Overmod raises that ceiling above the hexagon, so
+ * sat must back-calculate or Ki sits on 7.7 V and hunts. */
+static void fx_rewind_hexagon(int32_t va, int32_t vb, int32_t vc,
+                              int32_t ct, int32_t sn,
+                              int32_t ed, int32_t eq,
+                              int32_t *vd_uv, int32_t *vq_uv)
+{
+  int32_t v_al_d = ((((va << 1) - vb - vc) * FX_INV3_Q16) >> 16);
+  int32_t v_be_d = (((vb - vc) * FX_INV_SQRT3_Q15) >> 15);
+  int32_t vd_d = (v_al_d * ct + v_be_d * sn) >> 15;
+  int32_t vq_d = (-v_al_d * sn + v_be_d * ct) >> 15;
+  int32_t vd_hi = fx_vd_max_uv();
+  int32_t vq_hi = fx_vq_max_uv();
+
+  *vd_uv = vd_d << 10;
+  *vq_uv = vq_d << 10;
+  if (g_motor_foc_id_on != 0U)
+  {
+    s_id_int_uv = fx_clamp(*vd_uv - FX_KP_UV_PER_LSB * ed, -vd_hi, vd_hi);
+  }
+  s_iq_int_uv = fx_clamp(*vq_uv - FX_KP_UV_PER_LSB * eq, 0, vq_hi);
 }
 
 static uint32_t isqrt32(uint32_t x)
@@ -757,10 +783,7 @@ void MotorFocFx_Step(void)
         vmin_ph = vc;
       }
       g_motor_foc_fx.sat = 1U;
-      /* sat is a flag only. It does not rewind s_iq_int_uv / s_id_int_uv.
-       * Linear mode already clamps those to vq_hi/vd_hi. Overmod raises
-       * vq_hi to 7.7 V while the hexagon delivers less, so Ki can sit
-       * on the software ceiling and hunt. Do not treat sat as anti-windup. */
+      fx_rewind_hexagon(va, vb, vc, ct, sn, ed, eq, &vd_uv, &vq_uv);
     }
   }
   /* ---- 4.6 CCR. 33554 = 1.024 * 32768; v is VU = 1.024 mV. ---- */

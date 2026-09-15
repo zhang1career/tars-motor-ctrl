@@ -48,11 +48,15 @@ DISTURB_S="${DISTURB_S:-0}"
 HOLD_AFTER="${HOLD_AFTER:-0}"
 SCORE_ONLY="${SCORE_ONLY:-0}"
 # 1 = skip Vdc/√3 circle, hexagon-clamp iPark, allow VQMAX up to 7.7 V.
+# Hexagon sat rewinds current-loop Ki to the delivered vd/vq.
 OVERMOD="${OVERMOD:-0}"
 SLEW_S="${SLEW_S:-0}"
 SLEW_Q16="${SLEW_Q16:-900}"
 # 1 = write SLEW_Q16 at spd_on (before the first w_ref hold).
 APPLY_SLEW="${APPLY_SLEW:-0}"
+# 0/1 = overwrite g_motor_pwm_dt_on at spd_on. Empty keeps handover (1).
+# High speed has no low-side window; DT sign follows garbage current.
+DT_ON="${DT_ON:-}"
 # 1 = skip dump_foc_v (the slow end-of-hold foc_v refill). wrap/acc stay.
 SKIP_TRACE="${SKIP_TRACE:-0}"
 PARKOFF_S="${PARKOFF_S:-0}"
@@ -481,6 +485,16 @@ q=int('$SLEW_Q16')
 print(f'  SLEW NOW — {q} Q16 = {q*20000/65536:.0f} elec/s (Park rate)')
 "
   ocd -c 'init' -c "mww $sl $SLEW_Q16" -c 'exit' >/dev/null
+}
+
+apply_dt() {
+  if [[ -z "${DT_ON}" ]]; then
+    return 0
+  fi
+  local dt
+  dt=$(sym_addr g_motor_pwm_dt_on)
+  echo "  DT NOW — dead-time compensate ${DT_ON} (handover left it on)"
+  ocd -c 'init' -c "mwb $dt $DT_ON" -c 'exit' >/dev/null
 }
 
 dump_ccr() {
@@ -945,6 +959,7 @@ print(f'  id_step extreme {over} LSB  final {sum(d[-20:])/20:.0f} LSB')
           sleep 0.3
           apply_overmod
           apply_slew
+          apply_dt
           apply_vqmax 1
         else
           echo "  SPEED STEP — w_ref ${wr} elec/s, spd stays on (no re-seed)"
