@@ -87,6 +87,8 @@ typedef struct
 extern volatile motor_angle_state_t g_motor_angle;
 
 void MotorAngle_Reset(void);
+void MotorAngle_ResetAcc(void);
+int32_t MotorAngle_ThetaAcc(void);
 
 /* While FOC is producing torque, electrical direction must follow the
  * commanded iq, not the last hall edge. A single reverse edge is chatter

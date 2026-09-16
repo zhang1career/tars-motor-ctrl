@@ -7,6 +7,7 @@
 volatile motor_foc_fx_snapshot_t g_motor_foc_fx;
 volatile uint8_t g_motor_foc_handover;
 volatile int32_t g_motor_foc_iq_ref;
+volatile int32_t g_motor_foc_iq_lim;
 volatile uint8_t g_motor_foc_leg3;
 volatile uint8_t g_motor_foc_interp;
 volatile uint8_t g_motor_foc_id_on;
@@ -147,6 +148,7 @@ void MotorFocFx_Init(void)
   g_motor_foc_fx.sat = 0U;
   g_motor_foc_handover = 0U;
   g_motor_foc_iq_ref = 0;
+  g_motor_foc_iq_lim = (int32_t)MOTOR_FOC_IQ_LSB;
   g_motor_foc_leg3 = 0U;
   g_motor_foc_interp = 0U;
   g_motor_foc_id_on = 0U;
@@ -262,6 +264,11 @@ void MotorFocFx_SetMode(uint8_t mode)
   {
     MotorAngle_SetDirHint(0);
   }
+  if (mode == MOTOR_FOC_FX_OFF)
+  {
+    g_motor_foc_w_meas_eps = 0;
+    g_motor_foc_spd_on = 0U;
+  }
 }
 
 void MotorFocFx_SetIqRefLsb(int32_t lsb)
@@ -330,7 +337,16 @@ static int32_t fx_speed_pi(void)
   int32_t w_meas;
   int32_t ew;
   int32_t iq_unlim;
-  int32_t iq_hi = (int32_t)MOTOR_FOC_IQ_LSB;
+  int32_t iq_hi = g_motor_foc_iq_lim;
+
+  if (iq_hi < FX_W_IQ_FLOOR)
+  {
+    iq_hi = FX_W_IQ_FLOOR;
+  }
+  else if (iq_hi > (int32_t)MOTOR_FOC_IQ_LSB)
+  {
+    iq_hi = (int32_t)MOTOR_FOC_IQ_LSB;
+  }
 
   if (om < 0)
   {

@@ -549,6 +549,15 @@ int32_t MotorHall6_FocOmegaQ8(void)
   {
     return 0;
   }
+  /* No stair for 40 ms ≈ 4 elec/s. The six-sector mean otherwise
+   * freezes at the last running speed and the PI holds iq=0. */
+  if (s_ft_ticks > 800U)
+  {
+    s_ft_omega_spd_q8 = 0;
+    s_ft_spd_n = 0U;
+    s_ft_spd_i = 0U;
+    return 0;
+  }
   /* One-turn Σstep/Σticks. Dest-stair pred stays on the interpolator. */
   return s_ft_omega_spd_q8;
 }

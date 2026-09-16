@@ -455,6 +455,8 @@ void MotorPwm_HardwareSafe(void)
 {
   TIM_TypeDef *tim = TIM1;
 
+  /* Fault paths (NMI / HardFault / Error_Handler) may run before Init. */
+  __HAL_RCC_TIM1_CLK_ENABLE();
   tim->CCR1 = 0U;
   tim->CCR2 = 0U;
   tim->CCR3 = 0U;
@@ -573,6 +575,14 @@ void MotorPwm_Init(void)
   /* One update event per PWM period (center-aligned), like TARS TIM1 TRGO. */
   htim1.Instance->CR1 |= TIM_CR1_URS;
   MotorPwm_HardwareSafe();
+}
+
+void MotorPwm_RunCounter(void)
+{
+  if ((htim1.Instance->CR1 & TIM_CR1_CEN) == 0U)
+  {
+    (void)HAL_TIM_Base_Start(&htim1);
+  }
 }
 
 static int motor_pwm_start_channels(void)

@@ -9,6 +9,8 @@
 | [3. 翻过的坑](03-troubles.md) | 哪些「电机坏了」其实是测量或硬件在骗人 |
 | [4. Simulink 和定点](04-simulink-and-fixed-point.md) | `sim/` 用了没有、和仿真差多远、为什么不用浮点 |
 
+日常转电机走 **TARS I²C**，不走 SWD 调参。Mac：`TARS_CDC=… ./src/firmware/stm32f030/scripts/mot_i2c.sh start`（默认 1200 mA / 40 电周期/秒）。地址 `0x50`，产品号 `0x0005`。UART 只出人看的日志（PA14 → nanoDAP）。成绩仍看 wrap。
+
 数字以 [`report/speed-loop-20260914.md`](../report/speed-loop-20260914.md) 和路线图顶部「当前进度」为准。采数在 `models/captured/`，不进 Git。
 
 ## 十个词

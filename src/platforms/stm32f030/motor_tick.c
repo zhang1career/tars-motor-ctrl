@@ -12,7 +12,6 @@
 #include "motor_hall.h"
 #endif
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
-#include "motor_foc.h"
 #include "motor_foc_fx.h"
 #endif
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
@@ -53,11 +52,9 @@ static void motor_tick_dispatch(void)
     MotorOpenloop_ControlLoopISR();
   }
 
-  /* Fixed-point FOC belongs here: 1109 cycles, which fits the 2400-cycle tick
-   * even on a hall edge (roadmap 3.3.2). OBSERVE computes id/iq and writes
-   * nothing. CURRENT is armed only by MotorFocFx_Handover after the rotor
-   * is already spinning. The float MotorFoc_Step stays in the background
-   * loop as the numerical reference -- it cannot live in this ISR. */
+  /* Fixed-point FOC: 1109 cycles, fits the 2400-cycle tick even on a hall
+   * edge (roadmap 3.3.2). CURRENT is armed by MotorFocFx_Handover after
+   * the rotor is already spinning. */
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
   MotorFocFx_Step();
 #endif

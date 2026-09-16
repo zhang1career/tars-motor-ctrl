@@ -34,6 +34,33 @@ static const int16_t s_anchor_trim[MOTOR_ANGLE_SECTORS] = MOTOR_ANGLE_ANCHOR_TRI
  * the neighbour gives edge jumps up to 15 degrees, this gives about 1. */
 static uint16_t s_sector_ticks[MOTOR_ANGLE_SECTORS];
 static int8_t s_dir_hint;
+static int32_t s_theta_acc;
+static uint16_t s_theta_prev;
+static uint8_t s_theta_have;
+
+void MotorAngle_ResetAcc(void)
+{
+  s_theta_acc = 0;
+  s_theta_prev = 0U;
+  s_theta_have = 0U;
+}
+
+int32_t MotorAngle_ThetaAcc(void)
+{
+  return s_theta_acc;
+}
+
+static void angle_accum(void)
+{
+  uint16_t th = g_motor_angle.theta;
+
+  if (s_theta_have != 0U)
+  {
+    s_theta_acc += (int16_t)(th - s_theta_prev);
+  }
+  s_theta_prev = th;
+  s_theta_have = 1U;
+}
 
 void MotorAngle_Reset(void)
 {
@@ -55,6 +82,7 @@ void MotorAngle_Reset(void)
   g_motor_angle.edge_jump = 0U;
   g_motor_angle.bad_edges = 0U;
   g_motor_angle.edges = 0U;
+  MotorAngle_ResetAcc();
 }
 
 void MotorAngle_SetDirHint(int8_t dir)
@@ -201,6 +229,7 @@ void MotorAngle_Update(uint8_t hall)
   if (sector != g_motor_angle.sector)
   {
     angle_on_edge(sector);
+    angle_accum();
     return;
   }
 
@@ -244,4 +273,5 @@ void MotorAngle_Update(uint8_t hall)
                                                             MOTOR_ANGLE_SECTORS));
     g_motor_angle.theta = (uint16_t)((int32_t)base + travelled);
   }
+  angle_accum();
 }

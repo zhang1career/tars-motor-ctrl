@@ -1,12 +1,31 @@
 #include "stm32f0xx_it.h"
 #include "motor_tick.h"
 #include "motor_pwm.h"
+#include "tnb_i2c.h"
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
 #include "motor_adc.h"
 #endif
 
-void NMI_Handler(void)          { }
-void HardFault_Handler(void)    { for (;;) { } }
+void NMI_Handler(void)
+{
+  /* HSE Clock Security: SYSCLK has already fallen back to HSI. */
+  if (__HAL_RCC_GET_IT(RCC_IT_CSS) != RESET)
+  {
+    __HAL_RCC_CLEAR_IT(RCC_IT_CSS);
+  }
+  MotorPwm_HardwareSafe();
+  for (;;)
+  {
+  }
+}
+
+void HardFault_Handler(void)
+{
+  MotorPwm_HardwareSafe();
+  for (;;)
+  {
+  }
+}
 void SVC_Handler(void)          { }
 void PendSV_Handler(void)       { }
 
@@ -27,3 +46,8 @@ void DMA1_Channel1_IRQHandler(void)
   MotorAdc_DmaIrq();
 }
 #endif
+
+void I2C1_IRQHandler(void)
+{
+  TnbI2c_IRQHandler();
+}

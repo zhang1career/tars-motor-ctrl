@@ -13,8 +13,10 @@
 #include "motor_angle.h"
 #endif
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
-#include "motor_foc.h"
 #include "motor_foc_fx.h"
+#if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
+#include "motor_foc.h"
+#endif
 #ifndef MOTOR_FOC_IQ_MA
 #define MOTOR_FOC_IQ_MA 300
 #endif
@@ -62,8 +64,8 @@ void MotorApp_Init(void)
   MotorHall6_Init();
   MotorOpenloop_Init();
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
-  /* Conversions only happen once TIM1 runs, since TRGO drives them, so starting
-   * the DMA here is harmless and means samples exist whenever the timer does. */
+  /* MotorAdc_Start also starts the TIM1 counter (no MOE) so TRGO fills
+   * VBUS/phase samples before the first MotorPwm_Start. */
   MotorAdc_Init();
   (void)MotorAdc_Start();
 #endif
@@ -71,7 +73,9 @@ void MotorApp_Init(void)
   MotorAngle_Reset();
 #endif
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+#if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
   MotorFoc_Init();
+#endif
   MotorFocFx_Init();
 #endif
   MotorApp_ApplyDefaults();
@@ -92,7 +96,9 @@ void MotorApp_Stop(void)
 {
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
   MotorFocFx_SetMode(MOTOR_FOC_FX_OFF);
+#if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
   MotorFoc_SetMode(MOTOR_FOC_OFF);
+#endif
 #endif
   (void)MotorHall6_Enable(0);
   (void)MotorOpenloop_Enable(0);
@@ -194,7 +200,9 @@ int MotorApp_StartFocObserve(void)
    * only 12.8 ms of the 256-sample buffer -- too short to see period-6. */
   MotorTrace_Arm(MOTOR_TRACE_MODE_WRAP, MOTOR_TRACE_SRC_FOC, MOTOR_FOC_OBS_DECIM);
 #endif
+#if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
   MotorFoc_SetMode(MOTOR_FOC_OBSERVE);
+#endif
   MotorFocFx_SetMode(MOTOR_FOC_FX_OBSERVE);
   return MotorHall6_Enable(1);
 }

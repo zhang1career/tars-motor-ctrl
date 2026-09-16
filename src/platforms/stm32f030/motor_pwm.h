@@ -83,6 +83,8 @@ extern volatile motor_pwm_prot_t g_motor_pwm_prot;
 extern volatile uint8_t g_motor_pwm_force_trip;
 
 void MotorPwm_Init(void);
+/* Count TIM1 without arming CH1–3 or MOE so ADC TRGO (OC4REF) runs at idle. */
+void MotorPwm_RunCounter(void);
 void MotorPwm_HardwareSafe(void);
 void MotorPwm_PinsIdle(void);
 void MotorPwm_RestoreAfPins(void);

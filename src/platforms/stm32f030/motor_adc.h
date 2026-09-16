@@ -63,6 +63,12 @@ extern volatile uint16_t g_motor_adc_raw[MOTOR_ADC_CH_COUNT];
 void MotorAdc_Init(void);
 int  MotorAdc_Start(void);
 void MotorAdc_Stop(void);
+/* Pause the FOC sequence, convert VREFINT + TEMP, restore TRGO DMA.
+ * Returns 1 if both samples are non-zero. Task only; ~1 ms. */
+int  MotorAdc_PollRails(uint16_t *vref_now, uint16_t *ts_raw);
+/* Last PA0 / PA5 codes from PollRails. 0 if never sampled. */
+uint16_t MotorAdc_NtcRaw(void);
+uint16_t MotorAdc_VboostRaw(void);
 
 /* DMA TC is the control-tick source (MotorTick_Start / Stop). */
 void MotorAdc_EnableTick(void);

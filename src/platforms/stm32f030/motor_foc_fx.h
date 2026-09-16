@@ -77,6 +77,9 @@ extern volatile uint8_t g_motor_foc_handover;
 /* Host may write while CURRENT is running. ISR clamps to 0..MOTOR_FOC_IQ_LSB
  * each tick (sign ignored). */
 extern volatile int32_t g_motor_foc_iq_ref;
+/* Speed-loop |iq| ceiling in LSB. apply_refs writes this; ISR clamps
+ * to 0..MOTOR_FOC_IQ_LSB. Empty-load default is MOTOR_FOC_IQ_LSB. */
+extern volatile int32_t g_motor_foc_iq_lim;
 /* 0 = Hi-Z two-phase, 1 = DPWMMIN, 2 = midrail. Handover sets 1. */
 extern volatile uint8_t g_motor_foc_leg3;
 /* 1 = Park follows FocThetaInterp after the next hall edge. Handover

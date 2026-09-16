@@ -50,6 +50,9 @@ option(MOTOR_START_FOC_OBSERVE "Auto-start hall6 with FOC observing only (stage 
 option(MOTOR_ADC "PWM-synchronous phase current + bus voltage sampling (stage C)" ON)
 option(MOTOR_ANGLE "Continuous rotor electrical angle from the halls (stage D)" ON)
 option(MOTOR_FOC "Hall-sensored field-oriented control (stage E)" ON)
+# Float motor_foc.c is a numerical reference only. It pulls ~5 KB of
+# soft-float into the image; the I2C/runtime path uses motor_foc_fx.c.
+option(MOTOR_FOC_FLOAT "Link the background float FOC observer (motor_foc.c)" OFF)
 # nFAULT_MCU through soldered JP2, active-low into TIM1 BKIN.
 # The 2026-09-12 trips (duty 0, shunts ~0) were taken as a false window
 # comparator and BKIN was turned off. After the V-path UCC27211 died,
@@ -64,7 +67,7 @@ set(MOTOR_FOC_LAMBDA "" CACHE STRING "Back-EMF feed-forward flux linkage in Wb (
 set(MOTOR_ANGLE_OFFSET_Q16 "" CACHE STRING
     "Hall anchor to electrical angle offset, 65536 per revolution (stage E calibration)")
 option(MOTOR_ADC_STROBE "Pulse TP1 (PA15) at end of ADC sequence for scope checks" OFF)
-option(MOTOR_TRACE "On-chip per-tick sample buffer (stage A1); costs ~2 KB RAM" ON)
+option(MOTOR_TRACE "On-chip per-tick sample buffer (stage A1); costs ~2 KB RAM" OFF)
 set(MOTOR_ADC_LEAD_COUNTS "" CACHE STRING
     "Timer counts before the centre-aligned peak at which the ADC sequence starts (default 72 = 1.5 us)")
 set(MOTOR_TRACE_DEPTH "" CACHE STRING "Trace samples per channel (default 256)")
@@ -74,7 +77,8 @@ set(MOTOR_TRACE_DECIM "" CACHE STRING "Keep one sample every N control ticks (de
 # docs/mainboard-spec.md section 0 -- so keep it out of the runtime image and
 # only link it when re-running the timing bench.
 option(MOTOR_FOC_BENCH "Link sim/codegen_stm32 float FOC and its timing bench" OFF)
-set(MOTOR_FOC_IQ_LSB "" CACHE STRING "FOC |iq| clamp in ADC LSB (default 186 = 300 mA)")
+set(TNB_BOARD_ID "16" CACHE STRING "TNB board id; FULL address = 0x40 + id (16 → 0x50)")
+set(MOTOR_FOC_IQ_LSB "990" CACHE STRING "FOC |iq| clamp in ADC LSB (990 = 1.6 A, hall6 20%)")
 set(MOTOR_FOC_ID_LSB "" CACHE STRING "FOC |id| clamp in ADC LSB (default = MOTOR_FOC_IQ_LSB)")
 set(MOTOR_HALL6_KICK_DUTY "" CACHE STRING "Hall6 kick duty percent (default 6)")
 set(MOTOR_HALL6_RUN_DUTY "" CACHE STRING "Hall6 run duty percent (default 7)")
@@ -134,6 +138,15 @@ endif()
 if(MOTOR_FOC)
   add_compile_definitions(MOTOR_FOC=1)
 endif()
+if(MOTOR_START_BENCH AND MOTOR_FOC)
+  set(MOTOR_FOC_FLOAT ON)
+endif()
+if(MOTOR_FOC_FLOAT)
+  add_compile_definitions(MOTOR_FOC_FLOAT=1)
+endif()
+if(NOT "${TNB_BOARD_ID}" STREQUAL "")
+  add_compile_definitions(TNB_BOARD_ID=${TNB_BOARD_ID}U)
+endif()
 if(MOTOR_PWM_BKIN)
   add_compile_definitions(MOTOR_PWM_BKIN=1)
 else()
@@ -156,6 +169,7 @@ endforeach()
 endforeach()
 
 set(PLAT_DIR ${CMAKE_SOURCE_DIR}/../../platforms/stm32f030)
+set(TNB_DIR  ${CMAKE_SOURCE_DIR}/../../shared/tnb)
 set(FOC_DIR  ${CMAKE_SOURCE_DIR}/../../../sim/codegen_stm32)
 
 file(GLOB APP_SRC  ${CMAKE_SOURCE_DIR}/App/*.c)
@@ -176,11 +190,8 @@ endif()
 if(NOT MOTOR_FOC)
   list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_foc.c)
   list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_foc_fx.c)
-  set(FOC_FX_LINK_OPTS "")
-else()
-  # --gc-sections would drop MotorFocFx_Step from the default image, where
-  # nothing calls it yet. The 5.1 objdump check needs the symbol present.
-  set(FOC_FX_LINK_OPTS -Wl,--undefined=MotorFocFx_Step)
+elseif(NOT MOTOR_FOC_FLOAT)
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_foc.c)
 endif()
 
 if(MOTOR_FOC_BENCH)
@@ -226,6 +237,7 @@ add_executable(${PROJECT_NAME}.elf
   ${PLAT_SRC}
   ${FOC_SRC}
   ${HAL_SRC}
+  ${TNB_DIR}/tnb_crc.c
   ${CMAKE_SOURCE_DIR}/startup_stm32f030x6.s)
 
 target_include_directories(${PROJECT_NAME}.elf PRIVATE
@@ -233,6 +245,7 @@ target_include_directories(${PROJECT_NAME}.elf PRIVATE
   ${CMAKE_SOURCE_DIR}/App
   ${CMAKE_SOURCE_DIR}/Core/Inc
   ${PLAT_DIR}
+  ${TNB_DIR}
   ${FOC_DIR}
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Inc
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Inc/Legacy
@@ -251,9 +264,7 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
   -Wl,--undefined=MotorApp_DiagGPhase
   -Wl,--undefined=MotorApp_DiagStop
   -Wl,--undefined=MotorHall6_Enable
-  ${FOC_FX_LINK_OPTS}
   ${FOC_LINK_OPTS}
-  -lm
   -Wl,--print-memory-usage
   -Wl,-Map=${PROJECT_NAME}.map)
 

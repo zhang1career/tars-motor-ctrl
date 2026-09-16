@@ -9,6 +9,40 @@ volatile uint16_t g_motor_adc_raw[MOTOR_ADC_CH_COUNT];
 static ADC_HandleTypeDef s_hadc;
 static DMA_HandleTypeDef s_hdma;
 static uint8_t s_ready;
+static uint16_t s_ntc_raw;
+static uint16_t s_vboost_raw;
+
+static uint16_t adc_sw_one(ADC_HandleTypeDef *hadc, uint32_t channel)
+{
+  ADC_ChannelConfTypeDef ch = {0};
+  uint16_t v = 0U;
+
+  ADC1->CHSELR = 0U;
+  ch.Channel = channel;
+  ch.Rank = ADC_RANK_CHANNEL_NUMBER;
+  (void)HAL_ADC_ConfigChannel(hadc, &ch);
+  if (HAL_ADC_Start(hadc) == HAL_OK)
+  {
+    if (HAL_ADC_PollForConversion(hadc, 10U) == HAL_OK)
+    {
+      v = (uint16_t)HAL_ADC_GetValue(hadc);
+    }
+    (void)HAL_ADC_Stop(hadc);
+  }
+  ch.Rank = ADC_RANK_NONE;
+  (void)HAL_ADC_ConfigChannel(hadc, &ch);
+  return v;
+}
+
+uint16_t MotorAdc_NtcRaw(void)
+{
+  return s_ntc_raw;
+}
+
+uint16_t MotorAdc_VboostRaw(void)
+{
+  return s_vboost_raw;
+}
 
 static void motor_adc_pins_init(void)
 {
@@ -135,8 +169,8 @@ void MotorAdc_Init(void)
   }
 #endif
 
-  /* Same priority as TIM1: the control tick lives here, not on update. */
-  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  /* Below I2C (prio 0): a same-priority tick starves the TNB slave. */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
 
   s_ready = 1U;
@@ -200,6 +234,8 @@ int MotorAdc_Start(void)
   /* HAL_DMA_Start_IT also arms HT; one sequence must make one tick. TCIE
    * stays off until MotorTick_Start so init does not run the controller. */
   DMA1_Channel1->CCR &= ~(DMA_CCR_HTIE | DMA_CCR_TCIE);
+  /* TRGO is OC4REF. The counter must run; CH1–3 and MOE stay off. */
+  MotorPwm_RunCounter();
   return 1;
 }
 
@@ -209,6 +245,81 @@ void MotorAdc_Stop(void)
   {
     (void)HAL_ADC_Stop_DMA(&s_hadc);
   }
+}
+
+static void motor_adc_foc_channels(void)
+{
+  ADC_ChannelConfTypeDef ch = {0};
+
+  ADC1->CHSELR = 0U;
+  ch.Rank = ADC_RANK_CHANNEL_NUMBER;
+  ch.Channel = BOARD_ADC_IU_CH;
+  (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
+  ch.Channel = BOARD_ADC_IV_CH;
+  (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
+  ch.Channel = BOARD_ADC_IW_CH;
+  (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
+  ch.Channel = BOARD_ADC_VBUS_CH;
+  (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
+}
+
+int MotorAdc_PollRails(uint16_t *vref_now, uint16_t *ts_raw)
+{
+  uint16_t vr = 0U;
+  uint16_t ts = 0U;
+  uint8_t tick_on;
+
+  if (s_ready == 0U)
+  {
+    return 0;
+  }
+
+  tick_on = ((DMA1_Channel1->CCR & DMA_CCR_TCIE) != 0U) ? 1U : 0U;
+  MotorAdc_DisableTick();
+  (void)HAL_ADC_Stop_DMA(&s_hadc);
+
+  ADC->CCR |= ADC_CCR_VREFEN | ADC_CCR_TSEN;
+  HAL_Delay(1);
+
+  ADC1->CHSELR = 0U;
+  s_hadc.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  s_hadc.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  s_hadc.Init.DMAContinuousRequests = DISABLE;
+  s_hadc.Init.SamplingTimeCommon = ADC_SAMPLETIME_239CYCLES_5;
+  if (HAL_ADC_Init(&s_hadc) != HAL_OK)
+  {
+    goto restore;
+  }
+
+  vr = adc_sw_one(&s_hadc, ADC_CHANNEL_VREFINT);
+  ts = adc_sw_one(&s_hadc, ADC_CHANNEL_TEMPSENSOR);
+  s_ntc_raw = adc_sw_one(&s_hadc, BOARD_ADC_NTC_CH);
+  s_vboost_raw = adc_sw_one(&s_hadc, BOARD_ADC_VBOOST_CH);
+
+  if (vref_now != 0)
+  {
+    *vref_now = vr;
+  }
+  if (ts_raw != 0)
+  {
+    *ts_raw = ts;
+  }
+
+restore:
+  ADC->CCR &= ~(ADC_CCR_VREFEN | ADC_CCR_TSEN);
+  ADC1->CHSELR = 0U;
+  s_hadc.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T1_TRGO;
+  s_hadc.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  s_hadc.Init.DMAContinuousRequests = ENABLE;
+  s_hadc.Init.SamplingTimeCommon = ADC_SAMPLETIME_7CYCLES_5;
+  (void)HAL_ADC_Init(&s_hadc);
+  motor_adc_foc_channels();
+  (void)MotorAdc_Start();
+  if (tick_on != 0U)
+  {
+    MotorAdc_EnableTick();
+  }
+  return ((vr != 0U) && (ts != 0U)) ? 1 : 0;
 }
 
 void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
