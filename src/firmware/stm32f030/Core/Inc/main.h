@@ -8,6 +8,7 @@ extern "C" {
 #include "stm32f0xx_hal.h"
 
 void Error_Handler(void);
+void MotorClock_Retry(void);
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,6 @@
 # motor-ctrl 固件（STM32F030K6）
 
-Hall 闭环 6-step BLDC 控制，自 TARS `tars_hall6.c` 迁移。纯开环（`tars_openloop.c` 一路）保留作台架诊断。
+Hall 闭环 6-step（回退）+ 定点 FOC 电流环 / 速度环。hall6 自 TARS `tars_hall6.c` 迁移；开环只作诊断。速度环成绩见 [`docs/report/speed-loop-20260914.md`](../../../docs/report/speed-loop-20260914.md)。
 
 ## 目录
 
@@ -11,7 +11,7 @@ src/firmware/stm32f030/
 ├── board_pins.h          # PCB 管脚
 ├── CMakeLists.txt
 ├── Drivers/              # STM32CubeF0 HAL（自 tars-io-mux 复制）
-├── scripts/              # flash.sh + 台架扫描脚本（见下）
+├── scripts/              # flash.sh + 测试扫描脚本（见下）
 └── openocd.cfg
 
 src/platforms/stm32f030/  # hall6 / 开环算法 + PWM / Hall / TIM1 控制环
@@ -19,16 +19,31 @@ src/platforms/stm32f030/  # hall6 / 开环算法 + PWM / Hall / TIM1 控制环
 
 ## 默认运行参数
 
-台架实测得出，**不等于 TARS 的数字**（死区口径不同，见「已知陷阱」）：
+实测得出，**不等于 TARS 的数字**（死区口径不同，见「已知陷阱」）：
 
 ```
 hall6 闭环：phase 3, kick duty 20%, run duty 20%, direction 0（顺时针；1 为逆时针）
 TIM1：      20 kHz 中心对齐, DTG=72（1.5 us 死区）, 控制环 20 kHz
+ADC lead：  72 counts（1.5 µs），对准 6.2 V 低边窗口
+park_off：  +7°（FX_PARK_OFF_Q16 = 1274）
 ```
 
-正反转效率对称，实测两个方向都是约 60 mA / 24 电周期/s。
+hall6 20%：两个方向约 60–70 mA、约 24 电周期/s。
 
-实测：绕组约 1.6 A，转起来后反电动势把母线压到约 70 mA、约 24 电周期/s。
+## FOC 速度环（已交差）
+
+实现是 `src/platforms/stm32f030/motor_foc_fx.c`，不是 `sim/codegen_stm32`。转速成绩用 **wrap**（`foc_ang` 净角 / dt），不用环内表头 `w_meas`。
+
+| 项 | 值 |
+|---|---|
+| λ / Kt | 6.3 mWb / 0.0378 N·m/A（`sim/mc_params.m`） |
+| 稳态 | wrap 抱住 80 与 130 elec/s，正反转（无 `n/2`：刻度 3 为 79.8 / 129.4） |
+| 80→130 10–90% | 约 290–320 ms（100 ms 窗，刻度 3） |
+| 超调 | 刻度 3：+0.9～+1.7；刻度 5 旧 CSV 偶发 +10 |
+| 12 V 基速 | 线性真圆 6.58 V（Vdc/√3 @ 11.4 V）刻度 4 wrap **159 @ 160、174 @ 175**（两向）。6.2 V 是保守顶，约 149。150 以上最高相 CCR=ARR，低边窗口没了，iq 不作分 |
+| 弱磁 | **不做**。λ/Ld = 14.4 A，Imax = 3 A |
+
+协议：`SPD_S` + `W_REFS`，先 `spd_on` 再抬 `VQMAX_UV`。阶跃用 oneshot decim 200、100 ms 滑窗，`print_spd_step` 用 Viterbi 数整圈。`BUS_ABORT_A` 默认 0.50 A。`|i0|>10 mA` 作废该均值（约 150 elec/s 以上就会触发）。`OVERMOD=1` 关圆、六边形夹 iPark。扰动：`DISTURB_S` 抱速等转盘。
 
 ## 构建
 
@@ -38,7 +53,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 cmake --build src/firmware/stm32f030/build/Release
 ```
 
-产物：`build/Release/motor-ctrl.elf`（约 11.1 KB Flash / 1.5 KB RAM）。
+产物：`build/Release/motor-ctrl.elf`。默认图含 TNB I²C 从机，**不含** 2 KB `MOTOR_TRACE` 缓冲。
 
 上电自动启动 hall6 闭环（调试用，**会立即让电机转起来**）：
 
@@ -53,12 +68,25 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 |------|------|
 | `MOTOR_AUTO_START` | 上电即启动（默认 OFF） |
 | `MOTOR_START_HALL6` | 自启动走 hall6 闭环，否则走纯开环（默认 OFF） |
+| `MOTOR_START_DIAG` | 自启动一个**静态换相步**（不换相、不转），duty 取 `MOTOR_DUTY_PCT` 且内部限幅 ≤7% |
+| `MOTOR_START_BENCH` | 上电跑控制 ISR 周期数台架（电机不通电），结果在 `g_ctrl_bench` |
+| `MOTOR_ANGLE` | Hall 连续电角度（默认 ON） |
+| `MOTOR_ANGLE_OFFSET_Q16` / `MOTOR_ANGLE_ANCHOR_TRIM` | 角度标定结果（65536/电周期），阶段 E 用 `id` 测定，默认全零 |
+| `MOTOR_ADC` | PWM 同步的相电流 + 母线电压采样（默认 ON） |
+| `MOTOR_ADC_LEAD_COUNTS` | ADC 序列比计数峰值提前多少计数（默认 **72 = 1.5 µs**）。168/336 在 vq 5–6.2 V 会把 i0 偏到 −20～−36 mA |
+| `MOTOR_ADC_STROBE` | 在 ADC 序列结束时脉冲 TP1，供示波器验证采样点（默认 **OFF**）。它的沿会在 ISENSE 上耦合出百 mV 级尖峰，只在示波器会话里开 |
+| `MOTOR_TRACE` | 逐拍采样缓冲（默认 **OFF**；开约 2 KB RAM，与 I²C 默认图互斥） |
+| `TNB_BOARD_ID` | TNB 板号，FULL 地址 = `0x40 + id`（默认 **16 → 0x50**） |
+| `MOTOR_TRACE_DEPTH` / `MOTOR_TRACE_DECIM` | 缓冲深度 / 每 N 拍存一次（默认 256 / 1） |
+| `MOTOR_FOC_FLOAT` | 链接后台浮点观察环 `motor_foc.c`（默认 **OFF**；约 +5 KB 软浮点）。运行时用定点 `motor_foc_fx.c` |
+| `MOTOR_FOC_BENCH` | 链接 `sim/codegen_stm32` 的浮点 FOC 与周期数台架（默认 OFF，开启后约 +12 KB flash / +0.5 KB RAM） |
 | `MOTOR_HALL6_KICK_DUTY` / `MOTOR_HALL6_RUN_DUTY` | hall6 起转 / 运行 duty（上限 25%） |
 | `MOTOR_HALL6_PHASE` / `MOTOR_HALL6_CCW` | hall6 换相相位偏移 0..5 / 反转 |
 | `MOTOR_TIM1_DTG` | TIM1 BDTR 死区寄存器原始值（默认 72） |
 | `MOTOR_DUTY_PCT` / `MOTOR_PULSE_COUNTS` | 开环 duty 百分比 / 直接给 CCR 计数 |
 | `MOTOR_STEP_MS` / `MOTOR_PHASE_OFFSET` | 开环换相周期（0 = 静态保持不换相）/ 相位偏移 |
 | `MOTOR_HS_ONLY` | 诊断：只驱动高边，不开同臂低边 |
+| `MOTOR_PWM_BKIN` | TIM1 BKIN 接 nFAULT_MCU（JP2），默认 **ON**。关掉等于没有硬件过流 |
 
 **注意**：这些是 cmake cache 变量，复用旧 build 目录会残留上次的值。切换参数组时先 `rm -rf build/Release`，或显式传全部相关选项。
 
@@ -68,16 +96,29 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 ./src/firmware/stm32f030/scripts/flash.sh
 ```
 
-## 台架脚本
+## 测试脚本
 
 都会在收尾时刷回 `AUTO_START=OFF` 的安全固件，并在探头缺失或烧录失败时报错退出。
 
 | 脚本 | 用途 |
 |------|------|
-| `scripts/bench_common.sh` | 公共函数（探头预检、烧录校验、断电、DMM 读数重试），被下面三个 source |
+| `scripts/bench_common.sh` | 公共函数：探头预检、烧录校验、断电、DMM 读数重试，以及 `sym_addr`（从 ELF 解析地址，**不要硬编码**）、`read_words`（不 halt 读内存）、`cpu_alive` |
+| `scripts/board_check.sh` | **每次测试前先跑这个**。VDDA / 母线 / `V_BOOST` / 故障线 / PA11 / Hall 码 / 三路电流零点，逐条判据，不通过即非零退出。加 `--running` 可在电机运行中跑 |
+| `scripts/board_probe.tcl` | 上面那个用的 openocd 侧探针（TIM1 寄存器 + GPIO + 一次 ADC 扫描），全程不 halt |
+| `scripts/static_step.sh` | 静态单步通电，读三路 ISENSE：验证桥臂↔分流对应、INA240 符号、斩波下 `nFAULT` 不误跳 |
+| `scripts/hall6_regress.sh` | hall6 正反转回归，逐条对照 roadmap 1.2 |
+| `scripts/trace_dump.py` | 导出逐拍 trace 并画图，落在 `models/captured/`。含撕裂检测与扇区分析 |
+| `scripts/isense_cal.sh` | 阶段 C 标定：静态步扫 duty，比对 ADC 电流与母线反推值 |
+| `scripts/scope_capture.py` | 通过 VISA 采 Rigol DS1104Z 四通道，存 CSV + PNG |
+| `scripts/ctrl_bench.sh` | 控制 ISR 各部件的周期数实测（走烧录+reset，不用 `gdb call`） |
+| `scripts/foc_bench.sh` | 阶段 B 的 FOC 周期数测量（需 `-DMOTOR_FOC_BENCH=ON`） |
 | `scripts/duty_sweep.sh` | 按 duty 百分比扫描，读母线电流 |
 | `scripts/ccr_sweep.sh` | 按 CCR 计数扫描（duty 百分比在死区阈值附近粒度不够时用） |
 | `scripts/step_table.sh` | 逐个静态保持 6 个换相步，检查三相是否对称 |
+| `scripts/pole_pairs.sh` | 数极对数（已实测 4） |
+| `scripts/foc_current.sh` | hall6 → FOC 电流环交接；`SPD_S` / `W_REFS` 跑速度环与阶跃 |
+| `scripts/mot_i2c.sh` | Mac → TARS USB CDC → I2C：`start` / `w` / `iq` / `stat` / `stop` / `disturb` / `thermal`。`stat` 含 vboost / tboard / tcase / tmcu / clk / sense / vd / vq |
+| `scripts/mot_bench.py` | 扰动 15 s（t=3 s 拧 3→4）和温升长跑；CSV 落 `models/captured/` |
 
 ## API
 
@@ -95,7 +136,7 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 
 ## 已知陷阱
 
-这几条都是台架上花了很大代价才定位的，改动 PWM 相关代码前务必先读：
+这几条都是实测中花了很大代价才定位的，改动 PWM 相关代码前务必先读：
 
 1. **低边常通不能用 `CCR=0`。** `CCxE=0, CCxNE=1` 时 OCxN 引脚**直接跟随 OCxREF**（不反相、不插死区），所以 `CCR=0` 会让低边恒关、回流臂断开、电机毫无力矩。必须让 OCxREF 恒为有效，即 `CCR = ARR+1`。TARS 在 F429 上是同样写法。
 2. **中心对齐必须 `RCR=1`。** 上溢和下溢各产生一次 update 事件，`RCR=0` 时控制环会跑在 `2 × MOTOR_PWM_HZ`，所有基于 `MOTOR_CTRL_ISR_HZ` 的时间常数（Hall 消抖、堵转超时、kick 间隔）都会差一倍。
@@ -103,6 +144,14 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 4. **`MotorOpenloop_SetStepMs()` 把非零值限幅到 5..500 ms**，传 60000 会被压成 500 ms。需要真正不换相时传 **0**。
 5. **换向必须换驱动表，不能只移相。** `s_seq_ccw` 是 `s_seq_cw` 关于索引 0 的反序，所以「按 ccw 表映射」等价于「偏移 −p」；而 6 元循环里 `−p ≡ p` 恰好发生在 **p=0 和 p=3**——而这两个又是唯一高效的偏移（约 60 mA；±60° 的 p=1/2/4/5 要 0.25 A）。结果就是只靠 `direction` 位在 p=0/3 上完全无效。真正的换向是把 **PWM 相与 LOW 相互换**（`hall6_lookup()` 的 `reverse` 分支、`ol_lookup_step()` 的 ccw 分支），力矩反向而幅值不变。
 5. **半桥板 VOUT 对地的滤波电容必须拆掉。** 那块板按 buck 输出级设计，VOUT 上的电容会被高边充、低边放，形成一条约 96 mΩ 的通路吃掉约 1.5 A（∝ 导通时间、与死区无关、与电机是否接入无关），电机只能吃残羹。拆掉后母线电流降约 80~100 倍，并从「线性 ∝ 导通时间」变为「平方 ∝ duty²」的正常电机特性。
-6. **`MotorApp_Start()` 等 SWD 调用不可靠**（gdb `call` 返回正常但外设状态常对不上），台架验证请用 `MOTOR_AUTO_START` 烧录后 reset 的路径。另外 OpenOCD `program ... reset` 会在 `Reset_Handler` 留断点，测量前必须 `rbp all` + `resume`，否则 CPU 根本没跑到 `main`。
+6. **`MotorApp_Start()` 等 SWD 调用不可靠**（gdb `call` 返回正常但外设状态常对不上），实测验证请用 `MOTOR_AUTO_START` 烧录后 reset 的路径。另外 OpenOCD `program ... reset` 会在 `Reset_Handler` 留断点，测量前必须 `rbp all` + `resume`，不要再 `reset run`（会把断点种回去）。HSE 起振失败时留在 HSI 8 MHz，I²C 仍应答，但 `SystemCoreClock < 40 MHz` 时拒绝起转。
+7. **分流是低边、PWM 同步采样的。** 该相下管导通时才有数。边沿直通、V_BOOST 漏电都绕开三个采样电阻：相电流可以看起来正常（或全 0），母线电流却很大。窗口比较器看得到这类电流，ADC 看不到。不要因为分流读 0 就关 `MOTOR_PWM_BKIN`。
+8. **`park_off = +23°` 不是磁链偏角。** 它对着旧插值器 `FocThetaInterp − FocTheta` 的均值 −23°。插值器已按扇区居中（dth 均值约 0），残差写在 `FX_PARK_OFF_Q16 = 1274`（+7°）。不要写进 `MOTOR_ANGLE_OFFSET_Q16`，也不要再写负的 `park_off`。
 
-I²C 从机 / TNB 寄存器：待 `shared/tnb` 与 `App/motor_node.c` 后续添加。
+## TNB I²C / 日志
+
+运行时控制走 **TARS I2C**（地址 **0x50**，产品号 `0x0005`）。UART 只出日志：PA14 USART1 TX 115200 8N1，接 nanoDAP，不接 TARS。上电约 300 ms 内 PA14 仍是 SWCLK，之后改成 TX。
+
+Mac：`TARS_CDC=/dev/cu.usbmodemXXXX ./scripts/mot_i2c.sh start`（`w` / `iq` / `dir` / `stat` / `stop` / `clr` / `ping` / `caps` / `health` / `alert`）。TARS 壳：`nodebus mot start|stop|w|iq|dir|stat`，以及 `ping` / `caps` / `health` / `alert`。带磁阻负载默认 `iq=1200 mA`、`w=40` 电周期/秒；电流环顶 1.6 A。成绩看 `wrap`（`Δacc/65536/dt`），不要只看环内 `w`。位置环不做。
+
+ALERT：电机板 PA15 开漏低有效，TARS **PD5**（P1-37）输入 + 内部上拉。`nodebus alert` 看电平，`alert test` 强制拉低再松开。I²C 与 MCU 同 3.3 V，不要和 io-mux 的 5 V 上拉共总线。TEMP / VDDA 约 0.5 s 更新（内部传感器；采的时候电流 ADC 停约 1 ms）。母线低于约 8 V 时不把 nFAULT / 过温锁成故障；`./mot_i2c.sh clr` 也可手清。停机后 `w` 跟霍尔边沿走，停转就是 0。运行中 `dir` 是速度环过零再翻 Park（约 0.4 s 减速 + 40 ms + 再加速）；80 电周期/秒不要再立刻翻表。PEC：认出 `0x0005` 之后，写带整帧 CRC-8，读是 1 字节数据 + CRC。HSE 起振失败留在 HSI 8 MHz，拒绝起转。运行中约 3 s 没有 I²C 会停机（`flt` 的 I2C 位）。HardFault / Error / CSS NMI 先关 MOE；IWDG 约 2 s。nanoDAP 的 CDC 口既出日志也会碰复位，电机转着时不要打开那个串口。

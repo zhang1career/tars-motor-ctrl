@@ -1,3 +1,20 @@
+# os
+.DS_Store
+
+__pycache__
+
+
 models/captured/
 
 build/
+
+sim/slprj/
+sim/**/*.mat
+sim/results/
+sim/codegen_stm32/
+sim/.kicad
+**/*.lck
+**/*~
+
+# Local spice scratch, not the FOC report in docs/report/
+reports/

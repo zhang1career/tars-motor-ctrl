@@ -11,6 +11,15 @@ if [[ ! -f "$ELF" ]]; then
   exit 1
 fi
 
+# PA14 becomes USART1_TX after boot, so SWD only works under SRST.
 openocd -f "$CFG" \
-  -c "program $ELF verify reset" \
-  -c "init" -c "rbp all" -c "resume" -c "exit"
+  -c "reset_config srst_only srst_nogate connect_assert_srst" \
+  -c "program $ELF verify reset exit"
+
+# Drop the program() breakpoint and leave the core running.
+openocd -f "$CFG" \
+  -c "init" \
+  -c "halt" \
+  -c "rbp all" \
+  -c "resume" \
+  -c "exit" || true

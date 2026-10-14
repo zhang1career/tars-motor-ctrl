@@ -11,7 +11,7 @@ typedef struct {
   uint8_t  mode;
   uint8_t  duty_pct;
   uint8_t  step;
-  uint8_t  direction;    /* commutation sequence select; 0 spins CCW on this wiring */
+  uint8_t  direction;    /* commutation sequence select; hall6 uses 0 = clockwise */
   uint16_t step_ms;
   uint16_t ramp_start_ms;
   uint16_t ramp_end_ms;

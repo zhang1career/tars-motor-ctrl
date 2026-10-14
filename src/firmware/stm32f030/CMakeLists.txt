@@ -44,6 +44,42 @@ option(MOTOR_PHASE_SWEEP "Rotate hall phase offset every ~2s during openloop" OF
 option(MOTOR_UVW_SWEEP "Rotate U/V/W pin remap every ~2s during openloop" OFF)
 option(MOTOR_HS_ONLY "Diagnostic: drive PWM leg high side only (no complementary low side)" OFF)
 option(MOTOR_START_HALL6 "Auto-start hall closed loop instead of open loop" OFF)
+option(MOTOR_START_DIAG "Auto-start one static commutation step (no rotation)" OFF)
+option(MOTOR_START_BENCH "Run the control-ISR cycle bench at boot (motor off)" OFF)
+option(MOTOR_START_FOC_OBSERVE "Auto-start hall6 with FOC observing only (stage E step 1)" OFF)
+option(MOTOR_ADC "PWM-synchronous phase current + bus voltage sampling (stage C)" ON)
+option(MOTOR_ANGLE "Continuous rotor electrical angle from the halls (stage D)" ON)
+option(MOTOR_FOC "Hall-sensored field-oriented control (stage E)" ON)
+# Float motor_foc.c is a numerical reference only. It pulls ~5 KB of
+# soft-float into the image; the I2C/runtime path uses motor_foc_fx.c.
+option(MOTOR_FOC_FLOAT "Link the background float FOC observer (motor_foc.c)" OFF)
+# nFAULT_MCU through soldered JP2, active-low into TIM1 BKIN.
+# The 2026-09-12 trips (duty 0, shunts ~0) were taken as a false window
+# comparator and BKIN was turned off. After the V-path UCC27211 died,
+# that reading is probably wrong: PWM-synchronous shunts cannot see
+# edge/shoot-through, the analog comparator can. Default ON. If it
+# still trips on a healthy board, debug JP2/threshold — do not turn
+# this off again without new evidence.
+option(MOTOR_PWM_BKIN "Arm TIM1 BKIN from nFAULT_MCU (JP2)" ON)
+set(MOTOR_FOC_DECIM "" CACHE STRING "Control ticks per FOC step (default 2 = 10 kHz)")
+set(MOTOR_FOC_WC_HZ "" CACHE STRING "Current loop bandwidth in Hz (default 800)")
+set(MOTOR_FOC_LAMBDA "" CACHE STRING "Back-EMF feed-forward flux linkage in Wb (default 0)")
+set(MOTOR_ANGLE_OFFSET_Q16 "" CACHE STRING
+    "Hall anchor to electrical angle offset, 65536 per revolution (stage E calibration)")
+option(MOTOR_ADC_STROBE "Pulse TP1 (PA15) at end of ADC sequence for scope checks" OFF)
+option(MOTOR_TRACE "On-chip per-tick sample buffer (stage A1); costs ~2 KB RAM" OFF)
+set(MOTOR_ADC_LEAD_COUNTS "" CACHE STRING
+    "Timer counts before the centre-aligned peak at which the ADC sequence starts (default 72 = 1.5 us)")
+set(MOTOR_TRACE_DEPTH "" CACHE STRING "Trace samples per channel (default 256)")
+set(MOTOR_TRACE_DECIM "" CACHE STRING "Keep one sample every N control ticks (default 1)")
+# The stage-B float FOC from sim/codegen_stm32 costs ~12 KB flash and ~0.5 KB RAM
+# (soft-float libm). Its verdict is already recorded -- 15~18k cycles, see
+# docs/mainboard-spec.md section 0 -- so keep it out of the runtime image and
+# only link it when re-running the timing bench.
+option(MOTOR_FOC_BENCH "Link sim/codegen_stm32 float FOC and its timing bench" OFF)
+set(TNB_BOARD_ID "16" CACHE STRING "TNB board id; FULL address = 0x40 + id (16 → 0x50)")
+set(MOTOR_FOC_IQ_LSB "990" CACHE STRING "FOC |iq| clamp in ADC LSB (990 = 1.6 A, hall6 20%)")
+set(MOTOR_FOC_ID_LSB "" CACHE STRING "FOC |id| clamp in ADC LSB (default = MOTOR_FOC_IQ_LSB)")
 set(MOTOR_HALL6_KICK_DUTY "" CACHE STRING "Hall6 kick duty percent (default 6)")
 set(MOTOR_HALL6_RUN_DUTY "" CACHE STRING "Hall6 run duty percent (default 7)")
 set(MOTOR_HALL6_PHASE "" CACHE STRING "Hall6 phase offset 0..5 (default 3)")
@@ -78,19 +114,104 @@ endif()
 if(MOTOR_START_HALL6)
   add_compile_definitions(MOTOR_START_HALL6=1)
 endif()
+if(MOTOR_START_DIAG)
+  add_compile_definitions(MOTOR_START_DIAG=1)
+endif()
+if(MOTOR_START_BENCH)
+  add_compile_definitions(MOTOR_START_BENCH=1)
+endif()
+if(MOTOR_START_FOC_OBSERVE)
+  add_compile_definitions(MOTOR_START_FOC_OBSERVE=1)
+endif()
+if(MOTOR_TRACE)
+  add_compile_definitions(MOTOR_TRACE=1)
+endif()
+if(MOTOR_ADC)
+  add_compile_definitions(MOTOR_ADC=1)
+endif()
+if(MOTOR_ADC_STROBE)
+  add_compile_definitions(MOTOR_ADC_STROBE=1)
+endif()
+if(MOTOR_ANGLE)
+  add_compile_definitions(MOTOR_ANGLE=1)
+endif()
+if(MOTOR_FOC)
+  add_compile_definitions(MOTOR_FOC=1)
+endif()
+if(MOTOR_START_BENCH AND MOTOR_FOC)
+  set(MOTOR_FOC_FLOAT ON)
+endif()
+if(MOTOR_FOC_FLOAT)
+  add_compile_definitions(MOTOR_FOC_FLOAT=1)
+endif()
+if(NOT "${TNB_BOARD_ID}" STREQUAL "")
+  add_compile_definitions(TNB_BOARD_ID=${TNB_BOARD_ID}U)
+endif()
+if(MOTOR_PWM_BKIN)
+  add_compile_definitions(MOTOR_PWM_BKIN=1)
+else()
+  add_compile_definitions(MOTOR_PWM_BKIN=0)
+endif()
 foreach(_motor_param MOTOR_DUTY_PCT MOTOR_TIM1_DTG MOTOR_PULSE_COUNTS MOTOR_STEP_MS
                      MOTOR_PHASE_OFFSET MOTOR_HALL6_KICK_DUTY MOTOR_HALL6_RUN_DUTY
-                     MOTOR_HALL6_PHASE MOTOR_HALL6_CCW)
+                     MOTOR_HALL6_PHASE MOTOR_HALL6_CCW
+                     MOTOR_TRACE_DEPTH MOTOR_TRACE_DECIM MOTOR_ADC_LEAD_COUNTS
+                     MOTOR_ANGLE_OFFSET_Q16 MOTOR_FOC_DECIM MOTOR_FOC_IQ_LSB
+                     MOTOR_FOC_ID_LSB)
+foreach(_motor_float MOTOR_FOC_WC_HZ MOTOR_FOC_LAMBDA)
+  if(NOT "${${_motor_float}}" STREQUAL "")
+    add_compile_definitions(${_motor_float}=${${_motor_float}}f)
+  endif()
+endforeach()
   if(NOT "${${_motor_param}}" STREQUAL "")
     add_compile_definitions(${_motor_param}=${${_motor_param}}U)
   endif()
 endforeach()
 
 set(PLAT_DIR ${CMAKE_SOURCE_DIR}/../../platforms/stm32f030)
+set(TNB_DIR  ${CMAKE_SOURCE_DIR}/../../shared/tnb)
+set(FOC_DIR  ${CMAKE_SOURCE_DIR}/../../../sim/codegen_stm32)
 
 file(GLOB APP_SRC  ${CMAKE_SOURCE_DIR}/App/*.c)
 file(GLOB CORE_SRC ${CMAKE_SOURCE_DIR}/Core/Src/*.c)
 file(GLOB PLAT_SRC ${PLAT_DIR}/*.c)
+
+if(NOT MOTOR_TRACE)
+  # Drop the translation unit rather than rely on --gc-sections: the buffer is a
+  # 2 KB global and it should be provably absent, not probably collected.
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_trace.c)
+endif()
+if(NOT MOTOR_ADC)
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_adc.c)
+endif()
+if(NOT MOTOR_ANGLE)
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_angle.c)
+endif()
+if(NOT MOTOR_FOC)
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_foc.c)
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_foc_fx.c)
+elseif(NOT MOTOR_FOC_FLOAT)
+  list(REMOVE_ITEM PLAT_SRC ${PLAT_DIR}/motor_foc.c)
+endif()
+
+if(MOTOR_FOC_BENCH)
+  add_compile_definitions(MOTOR_FOC_BENCH=1)
+  set(FOC_SRC
+    ${FOC_DIR}/foc_step_stm32.c
+    ${FOC_DIR}/foc_step_stm32_data.c
+    ${FOC_DIR}/foc_step_stm32_initialize.c)
+  set(FOC_LINK_OPTS -Wl,--undefined=MotorFocBench_Run)
+else()
+  list(REMOVE_ITEM APP_SRC
+    ${CMAKE_SOURCE_DIR}/App/foc_bench.c
+    ${CMAKE_SOURCE_DIR}/App/foc_stubs.c)
+  set(FOC_SRC "")
+  set(FOC_LINK_OPTS "")
+endif()
+
+if(NOT MOTOR_START_BENCH)
+  list(REMOVE_ITEM APP_SRC ${CMAKE_SOURCE_DIR}/App/ctrl_bench.c)
+endif()
 
 set(HAL_SRC
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal.c
@@ -106,13 +227,17 @@ set(HAL_SRC
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_exti.c
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_tim.c
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_tim_ex.c
+  ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_adc.c
+  ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_adc_ex.c
 )
 
 add_executable(${PROJECT_NAME}.elf
   ${APP_SRC}
   ${CORE_SRC}
   ${PLAT_SRC}
+  ${FOC_SRC}
   ${HAL_SRC}
+  ${TNB_DIR}/tnb_crc.c
   ${CMAKE_SOURCE_DIR}/startup_stm32f030x6.s)
 
 target_include_directories(${PROJECT_NAME}.elf PRIVATE
@@ -120,6 +245,8 @@ target_include_directories(${PROJECT_NAME}.elf PRIVATE
   ${CMAKE_SOURCE_DIR}/App
   ${CMAKE_SOURCE_DIR}/Core/Inc
   ${PLAT_DIR}
+  ${TNB_DIR}
+  ${FOC_DIR}
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Inc
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Inc/Legacy
   ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F0xx/Include
@@ -137,6 +264,7 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
   -Wl,--undefined=MotorApp_DiagGPhase
   -Wl,--undefined=MotorApp_DiagStop
   -Wl,--undefined=MotorHall6_Enable
+  ${FOC_LINK_OPTS}
   -Wl,--print-memory-usage
   -Wl,-Map=${PROJECT_NAME}.map)
 

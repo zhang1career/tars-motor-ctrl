@@ -1,7 +1,35 @@
 #include "motor_app.h"
+#if defined(MOTOR_FOC_BENCH) && (MOTOR_FOC_BENCH != 0)
+#include "foc_bench.h"
+#endif
 #include "hall6.h"
 #include "openloop.h"
 #include "motor_pwm.h"
+#include "motor_tick.h"
+#if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
+#include "motor_adc.h"
+#endif
+#if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
+#include "motor_angle.h"
+#endif
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+#include "motor_foc_fx.h"
+#if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
+#include "motor_foc.h"
+#endif
+#ifndef MOTOR_FOC_IQ_MA
+#define MOTOR_FOC_IQ_MA 300
+#endif
+#ifndef MOTOR_FOC_OBS_DECIM
+#define MOTOR_FOC_OBS_DECIM 20U
+#endif
+#endif
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+#include "motor_trace.h"
+#ifndef MOTOR_TRACE_DECIM
+#define MOTOR_TRACE_DECIM 1U
+#endif
+#endif
 
 /*
  * Bench-validated on the UCC27211 + AOD4184 half bridges with the VOUT filter
@@ -35,16 +63,43 @@ void MotorApp_Init(void)
 {
   MotorHall6_Init();
   MotorOpenloop_Init();
+#if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
+  /* MotorAdc_Start also starts the TIM1 counter (no MOE) so TRGO fills
+   * VBUS/phase samples before the first MotorPwm_Start. */
+  MotorAdc_Init();
+  (void)MotorAdc_Start();
+#endif
+#if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
+  MotorAngle_Reset();
+#endif
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+#if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
+  MotorFoc_Init();
+#endif
+  MotorFocFx_Init();
+#endif
   MotorApp_ApplyDefaults();
 }
 
 int MotorApp_Start(void)
 {
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+  /* Wrap mode: the buffer always holds the most recent 256 ticks, so a capture
+   * needs no trigger and the host can read whenever it likes. Stage E will
+   * re-arm it one-shot from the host to catch step responses. */
+  MotorTrace_Arm(MOTOR_TRACE_MODE_WRAP, MOTOR_TRACE_SRC_HALL6, MOTOR_TRACE_DECIM);
+#endif
   return MotorHall6_Enable(1);
 }
 
 void MotorApp_Stop(void)
 {
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  MotorFocFx_SetMode(MOTOR_FOC_FX_OFF);
+#if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
+  MotorFoc_SetMode(MOTOR_FOC_OFF);
+#endif
+#endif
   (void)MotorHall6_Enable(0);
   (void)MotorOpenloop_Enable(0);
   MotorPwm_Stop();
@@ -84,6 +139,18 @@ int MotorApp_StartOpenloop6(void)
                                     MOTOR_STEP_MS);
 }
 
+/*
+ * One fixed commutation step, no Hall dependence and no commutation: the safest
+ * way to put current through the bridges. Reachable from cmake
+ * (-DMOTOR_AUTO_START=ON -DMOTOR_START_DIAG=ON) so it runs from a reset rather
+ * than from a gdb call, which docs/roadmap.md section 9.5 rules out for
+ * measurements.
+ */
+int MotorApp_StartDiagStep(void)
+{
+  return MotorApp_DiagGPhase(MOTOR_DUTY_PCT);
+}
+
 __attribute__((used)) int MotorApp_DiagGPhase(uint8_t duty_pct)
 {
   if (duty_pct > 7U)
@@ -101,13 +168,54 @@ __attribute__((used)) int MotorApp_DiagGPhase(uint8_t duty_pct)
 
   MotorPwm_SetPhase(MOTOR_PHASE_OFF, MOTOR_PHASE_PWM, MOTOR_PHASE_LOW, duty_pct);
   MotorPwm_MoeEnable();
+
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+  MotorTrace_Arm(MOTOR_TRACE_MODE_WRAP, MOTOR_TRACE_SRC_ADC, MOTOR_TRACE_DECIM);
+#endif
+  /* Neither controller is enabled here, so nothing else would start the control
+   * ISR -- and without it there is no per-tick sampling of the very operating
+   * point this step exists to calibrate. */
+  MotorTick_Start();
   return 1;
 }
 
 __attribute__((used)) void MotorApp_DiagStop(void)
 {
+  MotorTick_Stop();
   MotorApp_Stop();
 }
+
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+/*
+ * Stage E step 1: the motor keeps running on hall6 while FOC only computes
+ * id/iq from the same samples and angle. Nothing FOC produces reaches the
+ * bridges, so a wrong angle or a wrong current sign shows up as a number rather
+ * than as a runaway.
+ */
+int MotorApp_StartFocObserve(void)
+{
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+  /* decim 20 at 20 kHz covers ~256 ms, about 6 electrical revolutions at the
+   * hall6 20% point (24 rev/s). One electrical period at 20 kHz / decim 1 is
+   * only 12.8 ms of the 256-sample buffer -- too short to see period-6. */
+  MotorTrace_Arm(MOTOR_TRACE_MODE_WRAP, MOTOR_TRACE_SRC_FOC, MOTOR_FOC_OBS_DECIM);
+#endif
+#if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
+  MotorFoc_SetMode(MOTOR_FOC_OBSERVE);
+#endif
+  MotorFocFx_SetMode(MOTOR_FOC_FX_OBSERVE);
+  return MotorHall6_Enable(1);
+}
+
+#endif
+
+#if defined(MOTOR_FOC_BENCH) && (MOTOR_FOC_BENCH != 0)
+__attribute__((used)) void MotorApp_RunFocBench(void)
+{
+  MotorApp_Stop();
+  MotorFocBench_Run();
+}
+#endif
 
 __attribute__((used)) void *const motor_swd_entry[] = {
   (void *)MotorApp_Start,
@@ -116,4 +224,7 @@ __attribute__((used)) void *const motor_swd_entry[] = {
   (void *)MotorApp_StartOpenloop6Cfg,
   (void *)MotorApp_DiagGPhase,
   (void *)MotorApp_DiagStop,
+#if defined(MOTOR_FOC_BENCH) && (MOTOR_FOC_BENCH != 0)
+  (void *)MotorApp_RunFocBench,
+#endif
 };
