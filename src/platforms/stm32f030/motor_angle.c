@@ -268,9 +268,22 @@ void MotorAngle_Update(uint8_t hall)
       travelled = -limit;
     }
 
-    base = (g_motor_angle.dir > 0) ? angle_anchor(g_motor_angle.sector)
-                                   : angle_anchor((uint8_t)((g_motor_angle.sector + 1U) %
-                                                            MOTOR_ANGLE_SECTORS));
+    if (g_motor_angle.dir > 0)
+    {
+      base = angle_anchor(g_motor_angle.sector);
+    }
+    else
+    {
+      /* sector here is a live hall code, so it is 0..5. One subtract
+       * matches (sector + 1) % MOTOR_ANGLE_SECTORS. */
+      uint8_t next = (uint8_t)(g_motor_angle.sector + 1U);
+
+      if (next >= MOTOR_ANGLE_SECTORS)
+      {
+        next = (uint8_t)(next - MOTOR_ANGLE_SECTORS);
+      }
+      base = angle_anchor(next);
+    }
     g_motor_angle.theta = (uint16_t)((int32_t)base + travelled);
   }
   angle_accum();

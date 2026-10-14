@@ -77,7 +77,9 @@ def open_session():
 
 def session_cmd(ser, line: str, wait_s: float | None = None) -> str:
     if wait_s is None:
-        wait_s = 16.0 if "mot start" in line else 6.0
+        # Ceiling only. The read returns as soon as the next prompt arrives.
+        # Start can take longer to echo; a status read should not sit for seconds.
+        wait_s = 12.0 if "mot start" in line else 1.5
     ser.reset_input_buffer()
     ser.write((line + "\r").encode("ascii"))
     deadline = time.time() + wait_s
@@ -95,13 +97,21 @@ def session_cmd(ser, line: str, wait_s: float | None = None) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        sys.stderr.write("usage: tars_cdc.py <shell line>\n")
+    args = sys.argv[1:]
+    wait_s = None
+    if args and args[0] == "--wait":
+        if len(args) < 3:
+            sys.stderr.write("usage: tars_cdc.py [--wait SECONDS] <shell line>\n")
+            return 2
+        wait_s = float(args[1])
+        args = args[2:]
+    if not args:
+        sys.stderr.write("usage: tars_cdc.py [--wait SECONDS] <shell line>\n")
         return 2
-    line = " ".join(sys.argv[1:])
+    line = " ".join(args)
     ser = open_session()
     try:
-        buf = session_cmd(ser, line)
+        buf = session_cmd(ser, line, wait_s=wait_s)
         sys.stdout.write(buf)
         sys.stdout.flush()
     finally:

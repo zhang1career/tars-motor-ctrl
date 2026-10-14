@@ -35,8 +35,24 @@ enum
   MOTOR_ADC_IU = 0U,   /* PA1, ADC_IN1 */
   MOTOR_ADC_IV = 1U,   /* PA2, ADC_IN2 */
   MOTOR_ADC_IW = 2U,   /* PA3, ADC_IN3 */
-  MOTOR_ADC_VBUS = 3U  /* PA4, ADC_IN4 */
+  MOTOR_ADC_VBUS = 3U  /* PA4, ADC_IN4. Sample kept; see MotorAdc_VbusMv. */
 };
+
+/*
+ * PA4 VSENSE_12V is R30 39k / R31 10k on the +12V rail. That divider was
+ * not moved when the power stage became 24 V, so the code is not motor
+ * vdc. MOTOR_VBUS_SENSE stays 0 until a PCB respin taps the 24 V bus.
+ * The conversion stays in the ADC scan so the current-sample window does
+ * not move; the control law does not read the result.
+ *
+ * While sense is off, PWM scaling uses MOTOR_VBUS_FIXED_MV.
+ */
+#ifndef MOTOR_VBUS_SENSE
+#define MOTOR_VBUS_SENSE 0
+#endif
+#ifndef MOTOR_VBUS_FIXED_MV
+#define MOTOR_VBUS_FIXED_MV 24000
+#endif
 
 /* Counts before the peak at which the sequence starts. 48 MHz timer clock.
  * Four conversions take 6.7 us. At vq 5.0 V the low-side window still
@@ -81,6 +97,28 @@ void MotorAdc_DmaIrq(void);
 static inline int16_t MotorAdc_ShuntLsb(uint8_t idx)
 {
   return (int16_t)((int32_t)g_motor_adc_raw[idx] - 2048);
+}
+
+/* Millivolts the modulator should treat as DC bus.
+ * Sense on: 3.9639 mV/LSB * 1024 = 4058, R30/R31 = 4.9, result in mV.
+ * Sense off: the fixed power-stage voltage, not the PA4 code. */
+static inline int32_t MotorAdc_VbusMv(void)
+{
+#if MOTOR_VBUS_SENSE
+  int32_t vmv = ((int32_t)g_motor_adc_raw[MOTOR_ADC_VBUS] * 4058) >> 10;
+
+  if (vmv < 0)
+  {
+    vmv = 0;
+  }
+  if (vmv > 65535)
+  {
+    vmv = 65535;
+  }
+  return vmv;
+#else
+  return (int32_t)MOTOR_VBUS_FIXED_MV;
+#endif
 }
 
 #endif /* MOTOR_ADC_H */

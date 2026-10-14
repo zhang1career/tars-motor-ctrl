@@ -2,6 +2,7 @@
 # Shared helpers for the motor-ctrl bench sweeps. Source, do not execute.
 
 _bench_self="${BASH_SOURCE[0]:-$0}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)/prog/lib.sh"
 BENCH_ROOT="$(cd "$(dirname -- "$_bench_self")/.." && pwd)"
 if [[ ! -f "$BENCH_ROOT/CMakeLists.txt" ]]; then
   echo "bench_common.sh: cannot locate the firmware root from '$_bench_self'" >&2
@@ -59,7 +60,7 @@ ocd_start() {
   mkdir -p "$BUILD"
   # nohup + disown: otherwise the daemon dies with the calling script
   # (board_check, foc_current kick) via SIGHUP.
-  nohup openocd -f "$CFG" -c "tcl_port $OCD_TCL_PORT" -c "gdb_port disabled" \
+  nohup "$HW_PROG" openocd nanodap -- -f "$CFG" -c "tcl_port $OCD_TCL_PORT" -c "gdb_port disabled" \
     >"$OCD_LOG" 2>&1 &
   echo $! > "$OCD_PID_FILE"
   disown $! 2>/dev/null || true
@@ -147,14 +148,12 @@ ocd() {
 # whenever the code changes: docs once recorded openloop s_snap at 0x200000fc
 # while the linker had since put it at 0x200000b4, and pole_pairs.sh was reading
 # an address that belonged to neither.
+# Addresses come from scripts/sym_cache.py. nm runs only when the ELF
+# mtime or size changes, not on every lookup.
 sym_addr() {
-  local name="$1" addr
-  addr=$("$NM" "$ELF" | rg "^([0-9a-f]{8}) [bBdD] ${name}\$" -r '$1' | head -1)
-  if [[ -z "$addr" ]]; then
-    echo "sym_addr: '$name' not found in $ELF" >&2
-    return 1
-  fi
-  printf '0x%s' "$addr"
+  local addr
+  addr=$(python3 "$BENCH_ROOT/scripts/sym_cache.py" "$ELF" "$1") || return 1
+  printf '%s\n' "$addr"
 }
 
 # Read n words at addr without halting. Cortex-M memory access goes through the
@@ -246,7 +245,7 @@ report_and_clear_stale_bif() {
 # a target that is not running.
 require_dap() {
   if ! ocd_start; then
-    if [[ -f "$OCD_LOG" ]] && rg -qi 'unable to find a matching CMSIS-DAP' "$OCD_LOG"; then
+    if [[ -f "$OCD_LOG" ]] && rg -qi 'nanodap is not on the USB bus|unable to find a matching CMSIS-DAP' "$OCD_LOG"; then
       echo "no CMSIS-DAP probe found - plug in the nanoDAP and retry" >&2
     else
       echo "openocd failed to start — see $OCD_LOG" >&2
@@ -279,7 +278,7 @@ flash_elf() {
   fi
   echo "flash via rpc missed Verified OK; falling back to a one-shot program" >&2
   ocd_stop
-  if ! openocd -f "$CFG" -c "program $BUILD/motor-ctrl.elf verify reset" \
+  if ! "$HW_PROG" openocd nanodap -- -f "$CFG" -c "program $BUILD/motor-ctrl.elf verify reset" \
          -c 'init' -c 'rbp all' -c 'resume' -c 'exit' 2>&1 | rg -q 'Verified OK'; then
     echo "flash failed - probe or target lost" >&2
     exit 1

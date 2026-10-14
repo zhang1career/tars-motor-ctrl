@@ -27,39 +27,32 @@
 volatile uint8_t g_motor_tick_dir;
 #endif
 
-static void motor_tick_dispatch(void)
+volatile uint16_t g_tick_pad;
+volatile uint16_t g_tick_part_max[4]
+    __attribute__((section(".noinit"), aligned(4)));
+
+uint32_t MotorTick_Mark(void)
 {
-  /* Before any PWM write: hardware BKIN already dropped MOE, and the
-   * software limit must do the same on this tick's samples. */
-  MotorPwm_PollProtect();
-#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
-  MotorFocFx_Handover();
-#endif
+  return SysTick->VAL;
+}
 
-#if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
-  /* Before the controller, so stage E can consume the angle in the same tick.
-   * Reads the halls itself rather than borrowing hall6's copy, so FOC does not
-   * depend on hall6 being enabled. */
-  MotorAngle_Update(MotorHall_ReadRaw());
-#endif
+void MotorTick_PartNote(uint32_t a, uint32_t b, uint8_t i)
+{
+  uint32_t load = SysTick->LOAD;
+  uint32_t cyc = (a >= b) ? (a - b) : (a + load + 1U - b);
 
-  if (MotorHall6_IsEnabled() != 0)
+  if ((i < 4U) && (cyc < 20000U) && (cyc > g_tick_part_max[i]))
   {
-    MotorHall6_ControlLoopISR();
+    g_tick_part_max[i] = (uint16_t)cyc;
   }
-  else if (MotorOpenloop_IsEnabled() != 0)
-  {
-    MotorOpenloop_ControlLoopISR();
-  }
+}
 
-  /* Fixed-point FOC: 1109 cycles, fits the 2400-cycle tick even on a hall
-   * edge (roadmap 3.3.2). CURRENT is armed by MotorFocFx_Handover after
-   * the rotor is already spinning. */
-#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
-  MotorFocFx_Step();
-#endif
-
+/* Trace divides and keeps a pile of locals. noinline so a current
+ * tick with the trace idle does not pay that prologue. */
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+static void motor_tick_trace(void) __attribute__((noinline));
+static void motor_tick_trace(void)
+{
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
   if (g_motor_trace.source == MOTOR_TRACE_SRC_ADC)
   {
@@ -129,13 +122,78 @@ static void motor_tick_dispatch(void)
                     (int16_t)g_motor_foc_fx.iq_lsb);
   }
 #endif
+}
 #endif
+
+/* Six-step and open-loop. Not on the current-loop tick: that tick was
+ * pushing eight registers because this lived in the same function. */
+static void motor_tick_other(void) __attribute__((noinline));
+static void motor_tick_other(void)
+{
+#if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
+  MotorAngle_Update(MotorHall_ReadRaw());
+#endif
+  if (MotorHall6_IsEnabled() != 0)
+  {
+    MotorHall6_ControlLoopISR();
+  }
+  else if (MotorOpenloop_IsEnabled() != 0)
+  {
+    MotorOpenloop_ControlLoopISR();
+  }
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  MotorFocFx_Step();
+#endif
+}
+
+static void motor_tick_dispatch(void)
+{
+  /* Before any PWM write: hardware BKIN already dropped MOE, and the
+   * software limit must do the same on this tick's samples. */
+  MotorPwm_PollProtect();
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+  MotorFocFx_Handover();
+  if (g_motor_foc_fx.mode == MOTOR_FOC_FX_CURRENT)
+  {
+    /* Park uses FocTheta. Hall6 was released at handover, so the
+     * six-step ISR and the open-loop check are not on this tick. */
+    MotorFocFx_Step();
+  }
+  else
+#endif
+  {
+    motor_tick_other();
+  }
+
+  /* Whole-tick cycles are recorded in MotorAdc_DmaIrq. */
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+  if (g_motor_trace.source != 0U)
+  {
+    motor_tick_trace();
+  }
+#endif
+
+  if (g_tick_pad != 0U)
+  {
+    volatile uint16_t n = g_tick_pad;
+
+    while (n != 0U)
+    {
+      n--;
+      __asm__ volatile("" ::: "memory");
+    }
+  }
 }
 
 void MotorTick_Init(void)
 {
   /* No timer of its own. With MOTOR_ADC the tick is DMA TC (samples just
    * finished, near the PWM peak). Without it, TIM1 update (valley). */
+#if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
+  /* Nothing reads this. A live reference keeps the byte, so --gc-sections
+   * does not slide the following BSS. Not on the 20 kHz tick. */
+  (void)g_motor_tick_dir;
+#endif
 }
 
 void MotorTick_Start(void)
@@ -159,8 +217,6 @@ void MotorTick_Stop(void)
 void MotorTick_OnAdcComplete(void)
 {
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
-  g_motor_tick_dir =
-      ((htim1.Instance->CR1 & TIM_CR1_DIR) != 0U) ? 1U : 0U;
   motor_tick_dispatch();
 #endif
 }

@@ -1,4 +1,5 @@
 #include "hall6.h"
+#include "fx_udiv.h"
 #include "motor_hall.h"
 #include "motor_pwm.h"
 #include "motor_tick.h"
@@ -155,7 +156,17 @@ static uint8_t hall6_map_hall(uint8_t raw)
   }
 
   seq = hall6_seq(s_hall6_snap.direction);
-  return seq[(hall6_seq_index(seq, raw) + s_phase_offset) % 6U];
+  /* Index and phase offset are each 0..5, so the sum is 0..10.
+   * One subtract matches % 6. The open-loop kick keeps its own % 6. */
+  {
+    uint8_t idx = (uint8_t)(hall6_seq_index(seq, raw) + s_phase_offset);
+
+    if (idx >= 6U)
+    {
+      idx = (uint8_t)(idx - 6U);
+    }
+    return seq[idx];
+  }
 }
 
 static void hall6_kick_begin(uint8_t hall)
@@ -224,6 +235,11 @@ static void hall6_commutate(uint8_t table_hall)
     snap = s_hall6_snap;
     snap.fault = 1U;
     hall6_store(&snap);
+    return;
+  }
+  /* Leave the all-low precharge in place until its window ends. */
+  if (MotorPwm_BootstrapReady() == 0)
+  {
     return;
   }
 
@@ -332,60 +348,122 @@ int MotorHall6_IsEnabled(void)
   return (s_hall6_enable != 0U) ? 1 : 0;
 }
 
-uint16_t MotorHall6_FocTheta(void)
+static struct {
+  uint16_t last;
+  uint8_t have;
+  uint8_t hall_held;
+  uint8_t dir_held;
+} s_ftheta;
+
+static uint16_t foc_theta_walk(uint8_t hall, uint8_t dir) __attribute__((noinline));
+static uint16_t foc_theta_walk(uint8_t hall, uint8_t dir)
 {
-  static uint16_t last;
   const hall6_step_t *st;
   uint8_t mapped;
-  int32_t v_deg;
+  uint8_t idx;
+  /* Same signed division as ((v_deg - 90) * 65536) / 360, folded here. */
+  static const uint16_t theta_q16[6] = {
+      (uint16_t)(((int32_t)(30 - 90) * 65536) / 360),
+      (uint16_t)(((int32_t)(150 - 90) * 65536) / 360),
+      (uint16_t)(((int32_t)(90 - 90) * 65536) / 360),
+      (uint16_t)(((int32_t)(210 - 90) * 65536) / 360),
+      (uint16_t)(((int32_t)(330 - 90) * 65536) / 360),
+      (uint16_t)(((int32_t)(270 - 90) * 65536) / 360),
+  };
 
-  mapped = hall6_map_hall(MotorHall_ReadRaw());
+  s_ftheta.hall_held = hall;
+  s_ftheta.dir_held = dir;
+  s_ftheta.have = 1U;
+
+  mapped = hall6_map_hall(hall);
   st = hall6_lookup(mapped, s_hall6_snap.direction);
 
   /* Voltage angle of PWM=+ / LOW=− (U at 0°, V at 120°, W at 240°).
    * FOC +vq sits at theta+90°, so return V−90°. */
   if ((st->u == MOTOR_PHASE_PWM) && (st->w == MOTOR_PHASE_LOW))
   {
-    v_deg = 30;
+    idx = 0U;
   }
   else if ((st->v == MOTOR_PHASE_PWM) && (st->u == MOTOR_PHASE_LOW))
   {
-    v_deg = 150;
+    idx = 1U;
   }
   else if ((st->v == MOTOR_PHASE_PWM) && (st->w == MOTOR_PHASE_LOW))
   {
-    v_deg = 90;
+    idx = 2U;
   }
   else if ((st->w == MOTOR_PHASE_PWM) && (st->u == MOTOR_PHASE_LOW))
   {
-    v_deg = 210;
+    idx = 3U;
   }
   else if ((st->u == MOTOR_PHASE_PWM) && (st->v == MOTOR_PHASE_LOW))
   {
-    v_deg = 330;
+    idx = 4U;
   }
   else if ((st->w == MOTOR_PHASE_PWM) && (st->v == MOTOR_PHASE_LOW))
   {
-    v_deg = 270;
+    idx = 5U;
   }
   else
   {
-    return last;
+    return s_ftheta.last;
   }
 
-  last = (uint16_t)(((v_deg - 90) * 65536) / 360);
-  return last;
+  s_ftheta.last = theta_q16[idx];
+  return s_ftheta.last;
 }
 
-static uint8_t s_ft_stair;
-static uint8_t s_ft_have_stair;
-static uint16_t s_ft_anchor;
-static uint16_t s_ft_ticks;
-static uint16_t s_ft_last_ticks[6];
-static int32_t s_ft_omega_q8; /* dest-stair pred; interpolator only */
-static int32_t s_ft_omega_spd_q8; /* 6-sector Σwidth/Σticks; speed PI */
-static int16_t s_ft_spd_step[6];
-static uint16_t s_ft_spd_ticks[6];
+uint16_t MotorHall6_FocTheta(void)
+{
+  uint8_t hall;
+  uint8_t dir;
+
+  /* The stair is constant between hall edges. Recomputing the commutation
+   * table every 50 us was a few hundred cycles and did not change theta. */
+  hall = MotorHall_ReadRaw();
+  dir = s_hall6_snap.direction;
+  if ((s_ftheta.have != 0U) && (hall == s_ftheta.hall_held) &&
+      (dir == s_ftheta.dir_held))
+  {
+    return s_ftheta.last;
+  }
+  return foc_theta_walk(hall, dir);
+}
+
+/* One object: separate symbols were a literal-pool load per access.
+ * s_ft_anchor means s_ft.anchor. The width table stays const. */
+static struct {
+  uint16_t anchor;
+  uint16_t ticks;
+  int32_t omega_q8; /* dest-stair pred; interpolator only */
+  int16_t step;
+  uint8_t have_omega;
+  uint8_t stair;
+  uint8_t have_stair;
+  uint8_t spd_dirty; /* edge records a new sector; the reader divides */
+  uint8_t spd_n;
+  uint8_t spd_i;
+  int32_t omega_spd_q8; /* 6-sector Σwidth/Σticks; speed PI */
+  uint16_t last_ticks[6];
+  int16_t spd_step[6];
+  uint16_t spd_ticks[6];
+} s_ft;
+
+#define s_ft_anchor       s_ft.anchor
+#define s_ft_ticks        s_ft.ticks
+#define s_ft_omega_q8     s_ft.omega_q8
+#define s_ft_step         s_ft.step
+#define s_ft_have_omega   s_ft.have_omega
+#define s_ft_stair        s_ft.stair
+#define s_ft_have_stair   s_ft.have_stair
+#define s_ft_spd_dirty    s_ft.spd_dirty
+#define s_ft_spd_n        s_ft.spd_n
+#define s_ft_spd_i        s_ft.spd_i
+#define s_ft_omega_spd_q8 s_ft.omega_spd_q8
+#define s_ft_last_ticks   s_ft.last_ticks
+#define s_ft_spd_step     s_ft.spd_step
+#define s_ft_spd_ticks    s_ft.spd_ticks
+
 /* Physical sector widths, Q16. From foc_ang dwell fractions across
  * the 2026-09-14 speed-hold traces (tick 4/5, both dirs). Stairs are
  * FocTheta/10923, not raw hall. Sum is 65536. Equal 60° was 10923
@@ -394,112 +472,129 @@ static uint16_t s_ft_spd_ticks[6];
 static const uint16_t s_ft_width_q16[6] = {
     12302U, 9420U, 11316U, 11587U, 9470U, 11441U
 };
-static uint8_t s_ft_spd_n;
-static uint8_t s_ft_spd_i;
-static int16_t s_ft_step;
-static uint8_t s_ft_have_omega;
 
-/* FocTheta is 60° stairs. 65536/6 = 10922.67; 0..10922 → 0, wrap → 0. */
+/* FocTheta is 60° stairs. 65536/6 = 10922.67; 0..10922 → 0, wrap → 0.
+ * Thresholds are 1..6 times 10923, same buckets as unsigned division. */
 static uint8_t foc_theta_stair(uint16_t now)
 {
-  uint8_t s = (uint8_t)((uint32_t)now / 10923U);
+  uint32_t n = (uint32_t)now;
 
-  return (s > 5U) ? 0U : s;
+  if (n >= (10923U * 6U))
+  {
+    return 0U;
+  }
+  if (n >= (10923U * 5U))
+  {
+    return 5U;
+  }
+  if (n >= (10923U * 4U))
+  {
+    return 4U;
+  }
+  if (n >= (10923U * 3U))
+  {
+    return 3U;
+  }
+  if (n >= (10923U * 2U))
+  {
+    return 2U;
+  }
+  if (n >= 10923U)
+  {
+    return 1U;
+  }
+  return 0U;
 }
 
-uint16_t MotorHall6_FocThetaInterp(uint16_t now)
+/* Edge work (division, sector history) is not in the steady prologue.
+ * A shared function was pushing eight registers on every 50 us tick. */
+static uint16_t fx_interp_edge(uint16_t now) __attribute__((noinline));
+static uint16_t fx_interp_edge(uint16_t now)
 {
   uint8_t stair = foc_theta_stair(now);
-  int32_t travelled;
-  int32_t lim;
 
   /* Edge = FocTheta stair change only. A second MotorHall_ReadRaw() in
    * the same tick can disagree with the read inside FocTheta when the
    * GPIO edge falls between them: step and pred then blow up and dth
    * sits on ±60° for the whole next hall. Key dest-stair dwell by
    * `now`, not a second GPIO sample. */
+  if ((s_ft_have_stair != 0U) && (s_ft_ticks > 0U))
+  {
+    uint16_t pred;
+    int32_t om;
+
+    s_ft_step = (int16_t)(now - s_ft_anchor);
+    s_ft_last_ticks[s_ft_stair] = s_ft_ticks;
+    /* This stair's last dwell predicts this stair. Arithmetic mean of
+     * 60°/dwell reads high when halls are unequal (2026-09-13 wrap
+     * sat 2–5% under w_meas). Speed uses Σstep/Σticks over one turn. */
+    pred = s_ft_last_ticks[stair];
+    if (pred == 0U)
+    {
+      pred = s_ft_ticks;
+    }
+    om = Fx_DivS((int32_t)s_ft_step << 8, (int32_t)pred, 1U);
+    if (s_ft_have_omega != 0U)
+    {
+      s_ft_omega_q8 = (s_ft_omega_q8 * 3 + om) / 4;
+    }
+    else
+    {
+      s_ft_omega_q8 = om;
+    }
+    /* Sign follows the FocTheta stair; magnitude is the calibrated
+     * physical width of the stair we just left. */
+    if (s_ft_step >= 0)
+    {
+      s_ft_spd_step[s_ft_spd_i] = (int16_t)s_ft_width_q16[s_ft_stair];
+    }
+    else
+    {
+      s_ft_spd_step[s_ft_spd_i] = -(int16_t)s_ft_width_q16[s_ft_stair];
+    }
+    /* Inclusive of the starting-edge tick. The counter only advances
+     * while now == anchor, so a raw store drops one tick/sector and
+     * w_meas reads 1.5–3% high vs wrap (2026-09-14). Widths that
+     * still sum to 65536 cannot cancel that. */
+    s_ft_spd_ticks[s_ft_spd_i] = (uint16_t)(s_ft_ticks + 1U);
+    s_ft_spd_i++;
+    if (s_ft_spd_i >= 6U)
+    {
+      s_ft_spd_i = 0U;
+    }
+    if (s_ft_spd_n < 6U)
+    {
+      s_ft_spd_n++;
+    }
+    /* The six-sector speed quotient is not an input to the current
+     * PIs. Summing and dividing here made every hall edge a long
+     * tick. The reader computes it. */
+    s_ft_spd_dirty = 1U;
+    s_ft_have_omega = 1U;
+  }
+  s_ft_anchor = now;
+  s_ft_stair = stair;
+  s_ft_have_stair = 1U;
+  s_ft_ticks = 0U;
+  if ((s_ft_have_omega == 0U) || (s_ft_step == 0))
+  {
+    return now;
+  }
+  /* Sector-centered: start half a step behind the new stair so the
+   * sector-mean of (interp - stair) is 0. Continuous with the previous
+   * sector's end (old+30 = new-30). Starting at the stair and walking
+   * 3/4 of the way left dth mean -23 deg; Park then added +23 deg. */
+  return (uint16_t)((int32_t)now - ((int32_t)s_ft_step / 2));
+}
+
+uint16_t MotorHall6_FocThetaInterp(uint16_t now)
+{
+  int32_t travelled;
+  int32_t lim;
+
   if (now != s_ft_anchor)
   {
-    if ((s_ft_have_stair != 0U) && (s_ft_ticks > 0U))
-    {
-      uint16_t pred;
-      int32_t om;
-      int32_t sum_step;
-      uint32_t sum_ticks;
-      uint8_t k;
-
-      s_ft_step = (int16_t)(now - s_ft_anchor);
-      s_ft_last_ticks[s_ft_stair] = s_ft_ticks;
-      /* This stair's last dwell predicts this stair. Arithmetic mean of
-       * 60°/dwell reads high when halls are unequal (2026-09-13 wrap
-       * sat 2–5% under w_meas). Speed uses Σstep/Σticks over one turn. */
-      pred = s_ft_last_ticks[stair];
-      if (pred == 0U)
-      {
-        pred = s_ft_ticks;
-      }
-      om = ((int32_t)s_ft_step << 8) / (int32_t)pred;
-      if (s_ft_have_omega != 0U)
-      {
-        s_ft_omega_q8 = (s_ft_omega_q8 * 3 + om) / 4;
-      }
-      else
-      {
-        s_ft_omega_q8 = om;
-      }
-      /* Sign follows the FocTheta stair; magnitude is the calibrated
-       * physical width of the stair we just left. */
-      if (s_ft_step >= 0)
-      {
-        s_ft_spd_step[s_ft_spd_i] = (int16_t)s_ft_width_q16[s_ft_stair];
-      }
-      else
-      {
-        s_ft_spd_step[s_ft_spd_i] = -(int16_t)s_ft_width_q16[s_ft_stair];
-      }
-      /* Inclusive of the starting-edge tick. The counter only advances
-       * while now == anchor, so a raw store drops one tick/sector and
-       * w_meas reads 1.5–3% high vs wrap (2026-09-14). Widths that
-       * still sum to 65536 cannot cancel that. */
-      s_ft_spd_ticks[s_ft_spd_i] = (uint16_t)(s_ft_ticks + 1U);
-      s_ft_spd_i++;
-      if (s_ft_spd_i >= 6U)
-      {
-        s_ft_spd_i = 0U;
-      }
-      if (s_ft_spd_n < 6U)
-      {
-        s_ft_spd_n++;
-      }
-      sum_step = 0;
-      sum_ticks = 0U;
-      for (k = 0U; k < s_ft_spd_n; k++)
-      {
-        sum_step += (int32_t)s_ft_spd_step[k];
-        sum_ticks += (uint32_t)s_ft_spd_ticks[k];
-      }
-      if (sum_ticks > 0U)
-      {
-        /* dwell+1 already counts the starting-edge tick. n/2 was a
-         * leftover floor correction and overshot +0.37 tick/sector
-         * (wrap 0.9–1.4% above w_ref, 2026-09-14). */
-        s_ft_omega_spd_q8 = (sum_step << 8) / (int32_t)sum_ticks;
-      }
-      s_ft_have_omega = 1U;
-    }
-    s_ft_anchor = now;
-    s_ft_stair = stair;
-    s_ft_have_stair = 1U;
-    s_ft_ticks = 0U;
-    if ((s_ft_have_omega == 0U) || (s_ft_step == 0))
-    {
-      return now;
-    }
-    /* Sector-centered: start half a step behind the new stair so the
-     * sector-mean of (interp - stair) is 0. Continuous with the previous
-     * sector's end (old+30 = new-30). Starting at the stair and walking
-     * 3/4 of the way left dth mean -23 deg; Park then added +23 deg. */
-    return (uint16_t)((int32_t)now - ((int32_t)s_ft_step / 2));
+    return fx_interp_edge(now);
   }
 
   if (s_ft_ticks < 0xFFFFU)
@@ -556,9 +651,28 @@ int32_t MotorHall6_FocOmegaQ8(void)
     s_ft_omega_spd_q8 = 0;
     s_ft_spd_n = 0U;
     s_ft_spd_i = 0U;
+    s_ft_spd_dirty = 0U;
     return 0;
   }
-  /* One-turn Σstep/Σticks. Dest-stair pred stays on the interpolator. */
+  /* One-turn Σstep/Σticks. Not on the current-loop tick: only a reader
+   * (host, or the speed PI) pays the division, and only after an edge. */
+  if (s_ft_spd_dirty != 0U)
+  {
+    int32_t sum_step = 0;
+    uint32_t sum_ticks = 0U;
+    uint8_t k;
+
+    for (k = 0U; k < s_ft_spd_n; k++)
+    {
+      sum_step += (int32_t)s_ft_spd_step[k];
+      sum_ticks += (uint32_t)s_ft_spd_ticks[k];
+    }
+    if (sum_ticks > 0U)
+    {
+      s_ft_omega_spd_q8 = Fx_DivS(sum_step << 8, (int32_t)sum_ticks, 1U);
+    }
+    s_ft_spd_dirty = 0U;
+  }
   return s_ft_omega_spd_q8;
 }
 
@@ -722,6 +836,12 @@ int MotorHall6_Enable(int enable)
       s_moe_pending = 0U;
       return 0;
     }
+    MotorPwm_ChargeBootstrap();
+    if ((htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
+    {
+      s_moe_pending = 0U;
+      return 0;
+    }
 
     s_hall6_enable = 1U;
     s_last_gpio_hall = 0xFFU;
@@ -801,8 +921,15 @@ void MotorHall6_ControlLoopISR(void)
 
   if (s_kick_active != 0U)
   {
-    s_kick_div++;
-    if (s_kick_div >= MOTOR_HALL6_KICK_INTERVAL)
+    /* The 40 ms bootstrap window used to swallow the first kick step:
+     * the index advanced, but commutate returned and left the bridge
+     * in all-low. Hold the due step and apply it once the window ends. */
+    if (s_kick_div < MOTOR_HALL6_KICK_INTERVAL)
+    {
+      s_kick_div++;
+    }
+    if ((s_kick_div >= MOTOR_HALL6_KICK_INTERVAL) &&
+        (MotorPwm_BootstrapReady() != 0))
     {
       s_kick_div = 0U;
       hall6_kick_step();

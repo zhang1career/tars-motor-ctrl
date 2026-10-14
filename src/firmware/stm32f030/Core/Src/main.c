@@ -1,5 +1,6 @@
 #include "main.h"
 #include "motor_app.h"
+#include "motor_vsweep.h"
 #include "tnb_node.h"
 #include "uart_log.h"
 #if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
@@ -11,13 +12,19 @@
 #include "motor_pwm.h"
 #include "motor_hall.h"
 #include "motor_tick.h"
+#include "reset_diag.h"
 
 static void SystemClock_Config(void);
 static void Watchdog_Init(void);
 static void Watchdog_Kick(void);
+static void ResetDiag_Boot(void);
+
+volatile uint32_t g_reset_diag[RESET_DIAG_WORDS]
+    __attribute__((section(".noinit"), aligned(4), used));
 
 int main(void)
 {
+  ResetDiag_Boot();
   HAL_Init();
   SystemClock_Config();
   SystemCoreClockUpdate();
@@ -55,9 +62,32 @@ int main(void)
 #if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
     MotorFoc_Step();
 #endif
+    MotorVsweep_Poll();
     TnbNode_Task();
+    g_reset_diag[RESET_DIAG_MAIN_TICK_SEEN] = g_reset_diag[RESET_DIAG_TICK_TOTAL];
     Watchdog_Kick();
   }
+}
+
+static void ResetDiag_Boot(void)
+{
+  uint32_t i;
+
+  if (g_reset_diag[RESET_DIAG_MAGIC_I] != RESET_DIAG_MAGIC)
+  {
+    for (i = 0U; i < RESET_DIAG_WORDS; i++)
+    {
+      g_reset_diag[i] = 0U;
+    }
+    g_reset_diag[RESET_DIAG_MAGIC_I] = RESET_DIAG_MAGIC;
+  }
+  else
+  {
+    g_reset_diag[RESET_DIAG_TICK_GAP] =
+        g_reset_diag[RESET_DIAG_TICK_TOTAL] - g_reset_diag[RESET_DIAG_MAIN_TICK_SEEN];
+  }
+  g_reset_diag[RESET_DIAG_RCC_CSR] = RCC->CSR;
+  RCC->CSR |= RCC_CSR_RMVF;
 }
 
 static void SystemClock_Config(void)
@@ -129,14 +159,21 @@ void MotorClock_Retry(void)
 
 static void Watchdog_Init(void)
 {
-  /* LSI ~40 kHz / 64, reload 1250 → about 2 s. Independent of SYSCLK. */
+  /* LSI ~40 kHz / 64, reload 1250 → about 2 s. Independent of SYSCLK.
+   * The prescaler update only finishes while LSI is running. Start the
+   * watchdog first so that clock is forced on, then apply the 2 s reload. */
+  RCC->CSR |= RCC_CSR_LSION;
+  while ((RCC->CSR & RCC_CSR_LSIRDY) == 0U)
+  {
+  }
+  IWDG->KR = 0xCCCCU;
   IWDG->KR = 0x5555U;
   IWDG->PR = IWDG_PR_PR_2;
   IWDG->RLR = 1250U;
   while (IWDG->SR != 0U)
   {
+    IWDG->KR = 0xAAAAU;
   }
-  IWDG->KR = 0xCCCCU;
 }
 
 static void Watchdog_Kick(void)
@@ -146,6 +183,8 @@ static void Watchdog_Kick(void)
 
 void Error_Handler(void)
 {
+  g_reset_diag[RESET_DIAG_FAULT] = 3U;
+  g_reset_diag[RESET_DIAG_FAULT_PC] = (uint32_t)__builtin_return_address(0);
   MotorPwm_HardwareSafe();
   __disable_irq();
   for (;;)

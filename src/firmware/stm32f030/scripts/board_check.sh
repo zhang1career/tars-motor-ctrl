@@ -108,7 +108,7 @@ if skip_adc:
     spread = {1: 0, 2: 0, 3: 0}
     print(f"VDDA            {vdda:.2f} V        (nominal; ADC1 left to firmware)")
     print(f"current LSB     {lsb_ma:.3f} mA/LSB")
-    print(f"bus  (PA4)      {vbus:.2f} V        (g_motor_adc_raw)")
+    print(f"VSENSE_12V PA4  {vbus:.2f} V        (+12V rail, not motor vdc)")
     print(f"V_BOOST (PA5)   n/a             (not in the control sequence)")
     print(f"bus current     {bus_i:.3f} A         (UT61E, in series with the supply)")
     print("board NTC       n/a")
@@ -129,7 +129,7 @@ else:
     ntc_c = 1 / (1 / 298.15 + math.log(r_ntc / 10000) / 3435) - 273.15
     print(f"VDDA            {vdda:.4f} V        (VREFINT {med[17]:.0f}, cal {vref_cal})")
     print(f"current LSB     {lsb_ma:.3f} mA/LSB")
-    print(f"bus  (PA4)      {vbus:.2f} V")
+    print(f"VSENSE_12V PA4  {vbus:.2f} V        (+12V rail, not motor vdc)")
     print(f"V_BOOST (PA5)   {vboost:.2f} V")
     print(f"bus current     {bus_i:.3f} A         (UT61E, in series with the supply)")
     print(f"board NTC       {ntc_c:.1f} C          ({r_ntc:.0f} ohm)")
@@ -150,12 +150,12 @@ fails = []
 if not 3.15 <= vdda <= 3.45:
     fails.append(f"VDDA {vdda:.3f} V outside 3.15..3.45")
 if not 10.5 <= vbus <= 16.5:
-    # LM339s ride the motor bus. Below ~10.5 they are dead and both
-    # fault lines float high, so "no fault" proves nothing. 16.5 is
-    # under the UCC27211 17 V recommended VDD (abs max 20 V).
-    fails.append(f"bus {vbus:.2f} V outside 10.5..16.5 -- with the bus absent "
-                 f"the LM339 window comparators are unpowered, so "
-                 f"nFAULT/nOTEMP reading high proves nothing")
+    # Divider is still on +12V. LM339s and (via J21) UCC27211 VDD ride
+    # that rail. Below ~10.5 the comparators are dead and both fault
+    # lines float high. 16.5 stays under the 17 V recommended VDD.
+    fails.append(f"+12V rail {vbus:.2f} V outside 10.5..16.5. "
+                 f"VSENSE_12V was not moved to the 24 V motor bus; "
+                 f"this pin still has to read the 12 V rail")
 if not skip_adc:
     if vboost > vbus + 1.5:
         fails.append(f"V_BOOST {vboost:.2f} V is {vboost - vbus:+.2f} above "

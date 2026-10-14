@@ -3,6 +3,7 @@
 #include "motor_tick.h"
 #include "board_pins.h"
 #include "main.h"
+#include "reset_diag.h"
 
 volatile uint16_t g_motor_adc_raw[MOTOR_ADC_CH_COUNT];
 
@@ -148,6 +149,8 @@ void MotorAdc_Init(void)
   (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
   ch.Channel = BOARD_ADC_IW_CH;
   (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
+  /* Kept in the scan so IU/IV/IW stay on the same timetable. With
+   * MOTOR_VBUS_SENSE=0 the code is not motor vdc; see MotorAdc_VbusMv. */
   ch.Channel = BOARD_ADC_VBUS_CH;
   (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
 
@@ -188,12 +191,21 @@ void MotorAdc_DisableTick(void)
   DMA1_Channel1->CCR &= ~DMA_CCR_TCIE;
 }
 
+#define MOTOR_TICK_CYC_TARGET 1000U
+#define MOTOR_TICK_CYC_STEADY 1200U
+#define MOTOR_TICK_CYC_HARD   2400U
+
 void MotorAdc_DmaIrq(void)
 {
   uint32_t isr = DMA1->ISR;
 
   if ((isr & DMA_ISR_TCIF1) != 0U)
   {
+    uint32_t load;
+    uint32_t a;
+    uint32_t b;
+    uint32_t cyc;
+
     DMA1->IFCR = DMA_IFCR_CTCIF1;
 #if defined(MOTOR_ADC_STROBE) && (MOTOR_ADC_STROBE != 0)
     /* Pulse first: it marks sample end, and the edges must not sit in the
@@ -207,7 +219,24 @@ void MotorAdc_DmaIrq(void)
     }
     BOARD_TP_CYCLE_PORT->BRR = BOARD_TP_CYCLE_PIN;
 #endif
+    load = SysTick->LOAD;
+    a = SysTick->VAL;
     MotorTick_OnAdcComplete();
+    b = SysTick->VAL;
+    /* This window is the whole tick. Target is MOTOR_TICK_CYC_TARGET.
+     * Steady ticks should stay at or under MOTOR_TICK_CYC_STEADY.
+     * MOTOR_TICK_CYC_HARD is the 50 us ceiling already counted by the next TC flag. */
+    cyc = (a >= b) ? (a - b) : (a + load + 1U - b);
+    if (cyc > g_reset_diag[RESET_DIAG_TICK_CYC_MAX])
+    {
+      g_reset_diag[RESET_DIAG_TICK_CYC_MAX] = cyc;
+    }
+    g_reset_diag[RESET_DIAG_TICK_CYC_SUM] += cyc;
+    g_reset_diag[RESET_DIAG_TICK_TOTAL] += 1U;
+    if ((DMA1->ISR & DMA_ISR_TCIF1) != 0U)
+    {
+      g_reset_diag[RESET_DIAG_TICK_OVERRUN] += 1U;
+    }
   }
   if ((isr & DMA_ISR_HTIF1) != 0U)
   {

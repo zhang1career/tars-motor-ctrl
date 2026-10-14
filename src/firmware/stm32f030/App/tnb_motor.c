@@ -12,11 +12,13 @@
 #include "board_pins.h"
 #include "main.h"
 
-#define MA_PER_LSB_NUM   1617
-#define MA_PER_LSB_DEN   1000
+#define MA_PER_LSB_NUM   1617   /* 16.17 mA/LSB, 1 mOhm shunt */
+#define MA_PER_LSB_DEN   100
 #define VQMAX_LINEAR_UV  6580000
 #define START_TIMEOUT_MS 8000U
-#define HALL6_DUTY_PCT   25U
+/* After the 1.5 us dead time, 15% of 24 V is ~2.9 V average, about the
+ * 2.6 V that 25% gave on the 12 V bus. */
+#define HALL6_DUTY_PCT   10U
 #define HALL6_READY_EDGES 6U
 #define HALL6_STALL_TICKS 160000U
 #define REV_W_EPS         12
@@ -32,6 +34,13 @@
 #ifndef TNB_I2C_TIMEOUT_MS
 #define TNB_I2C_TIMEOUT_MS 3000U
 #endif
+/* 1 = I2C start stays in hall6. The start timeout and HALL6_STALL_TICKS
+ * count from start, so this mode stops on HALL6_ONLY_EDGE_MS without a
+ * Hall edge instead. */
+#ifndef TNB_HALL6_ONLY
+#define TNB_HALL6_ONLY 0
+#endif
+#define HALL6_ONLY_EDGE_MS 1000U
 
 static volatile uint8_t  s_mode = TNB_MOT_MODE_SPEED;
 static volatile uint8_t  s_dir;
@@ -47,6 +56,8 @@ static volatile uint16_t s_fault;
 static volatile uint8_t  s_run_req;
 static volatile uint8_t  s_stop_req;
 static volatile uint32_t s_t0;
+static uint32_t s_h6_edges;
+static uint32_t s_h6_edge_t;
 
 static int32_t ma_to_lsb(int16_t ma)
 {
@@ -97,7 +108,7 @@ static void apply_dir_now(void)
 
 static uint16_t vbus_mv_now(void)
 {
-  int32_t vmv = ((int32_t)g_motor_adc_raw[MOTOR_ADC_VBUS] * 4058) >> 10;
+  int32_t vmv = MotorAdc_VbusMv();
 
   if (vmv < 0)
   {
@@ -204,6 +215,7 @@ static uint8_t hall6_spinning(const motor_hall6_snapshot_t *snap)
 
 static void start_hall6(uint8_t reset_acc)
 {
+  MotorPwm_ClearOcpHold();
   MotorApp_ApplyDefaults();
   MotorHall6_SetKickDutyPct(HALL6_DUTY_PCT);
   MotorHall6_SetDutyPct(HALL6_DUTY_PCT);
@@ -218,6 +230,8 @@ static void start_hall6(uint8_t reset_acc)
   }
   s_state = TNB_MOT_ST_HALL6;
   s_t0 = HAL_GetTick();
+  s_h6_edges = 0U;
+  s_h6_edge_t = s_t0;
   if (reset_acc != 0U)
   {
     MotorAngle_ResetAcc();
@@ -317,10 +331,6 @@ void TnbMotor_PollIsr(void)
   if (MotorPwm_IsLatched() != 0U)
   {
     s_fault |= TNB_MOT_FLT_PWM;
-    if ((BOARD_NFAULT_PORT->IDR & BOARD_NFAULT_PIN) != 0U)
-    {
-      MotorPwm_MoeEnable();
-    }
   }
   else
   {
@@ -401,7 +411,7 @@ void TnbMotor_PollIsr(void)
     {
       g_motor_angle.valid = 1U;
     }
-    if (g_motor_angle.valid != 0U)
+    if ((g_motor_angle.valid != 0U) && (TNB_HALL6_ONLY == 0))
     {
       g_motor_foc_handover = 1U;
     }
@@ -421,7 +431,7 @@ void TnbMotor_PollIsr(void)
     return;
   }
 
-  if (snap.loop_count > HALL6_STALL_TICKS)
+  if ((TNB_HALL6_ONLY == 0) && (snap.loop_count > HALL6_STALL_TICKS))
   {
     s_rev = 0U;
     MotorApp_Stop();
@@ -537,8 +547,6 @@ void TnbMotor_Telemetry(uint16_t *theta_q16, int16_t *w_eps,
                         int16_t *iq_ma, int16_t *id_ma,
                         uint16_t *vbus_mv, uint8_t *hall)
 {
-  int32_t vmv;
-
   if (theta_q16 != 0)
   {
     *theta_q16 = g_motor_angle.theta;
@@ -564,16 +572,7 @@ void TnbMotor_Telemetry(uint16_t *theta_q16, int16_t *w_eps,
   }
   if (vbus_mv != 0)
   {
-    vmv = ((int32_t)g_motor_adc_raw[MOTOR_ADC_VBUS] * 4058) >> 10;
-    if (vmv < 0)
-    {
-      vmv = 0;
-    }
-    if (vmv > 65535)
-    {
-      vmv = 65535;
-    }
-    *vbus_mv = (uint16_t)vmv;
+    *vbus_mv = vbus_mv_now();
   }
   if (hall != 0)
   {
@@ -584,6 +583,24 @@ void TnbMotor_Telemetry(uint16_t *theta_q16, int16_t *w_eps,
 void TnbMotor_Task(void)
 {
   static uint8_t rev_seen;
+
+  MotorPwm_PollOcpZero();
+  if (g_motor_pwm_prot.ocp_hold != 0U)
+  {
+    s_fault |= (g_motor_pwm_prot.ocp_kind == 2U) ? TNB_MOT_FLT_HWOC
+                                                 : TNB_MOT_FLT_SWOC;
+    if ((s_state != TNB_MOT_ST_IDLE) && (s_state != TNB_MOT_ST_FAULT))
+    {
+      do_stop();
+    }
+    s_state = TNB_MOT_ST_FAULT;
+    return;
+  }
+
+  /* Supervisor used to run inside the I2C interrupt, ahead of the
+   * motor tick. Keep it on the main loop so its divides cannot
+   * stretch a 50 us tick. */
+  TnbMotor_PollIsr();
 
   if (s_rev == REV_HALL6)
   {
@@ -675,7 +692,8 @@ void TnbMotor_Task(void)
     motor_hall6_snapshot_t snap;
 
     MotorHall6_GetSnapshot(&snap);
-    if ((hall6_spinning(&snap) != 0U) && (g_motor_angle.valid != 0U))
+    if ((hall6_spinning(&snap) != 0U) && (g_motor_angle.valid != 0U) &&
+        (TNB_HALL6_ONLY == 0))
     {
       g_motor_foc_iq_ref = ma_to_lsb(s_iq_ma);
       g_motor_foc_handover = 1U;
@@ -690,7 +708,16 @@ void TnbMotor_Task(void)
       enter_run();
       return;
     }
+#if TNB_HALL6_ONLY
+    if (snap.hall_changes != s_h6_edges)
+    {
+      s_h6_edges = snap.hall_changes;
+      s_h6_edge_t = HAL_GetTick();
+    }
+    if ((HAL_GetTick() - s_h6_edge_t) > HALL6_ONLY_EDGE_MS)
+#else
     if ((HAL_GetTick() - s_t0) > START_TIMEOUT_MS)
+#endif
     {
       do_stop();
       s_fault |= TNB_MOT_FLT_STALL;

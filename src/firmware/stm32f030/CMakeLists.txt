@@ -61,6 +61,10 @@ option(MOTOR_FOC_FLOAT "Link the background float FOC observer (motor_foc.c)" OF
 # still trips on a healthy board, debug JP2/threshold — do not turn
 # this off again without new evidence.
 option(MOTOR_PWM_BKIN "Arm TIM1 BKIN from nFAULT_MCU (JP2)" ON)
+# VSENSE_12V is still the +12V divider. Do not treat PA4 as the 24 V
+# motor bus. Turn this back on only after the PCB samples that bus.
+option(MOTOR_VBUS_SENSE "Use PA4 VSENSE_12V as the motor-bus voltage" OFF)
+set(MOTOR_VBUS_FIXED_MV "24000" CACHE STRING "Motor bus for PWM scaling while MOTOR_VBUS_SENSE is OFF, millivolts")
 set(MOTOR_FOC_DECIM "" CACHE STRING "Control ticks per FOC step (default 2 = 10 kHz)")
 set(MOTOR_FOC_WC_HZ "" CACHE STRING "Current loop bandwidth in Hz (default 800)")
 set(MOTOR_FOC_LAMBDA "" CACHE STRING "Back-EMF feed-forward flux linkage in Wb (default 0)")
@@ -78,7 +82,9 @@ set(MOTOR_TRACE_DECIM "" CACHE STRING "Keep one sample every N control ticks (de
 # only link it when re-running the timing bench.
 option(MOTOR_FOC_BENCH "Link sim/codegen_stm32 float FOC and its timing bench" OFF)
 set(TNB_BOARD_ID "16" CACHE STRING "TNB board id; FULL address = 0x40 + id (16 → 0x50)")
-set(MOTOR_FOC_IQ_LSB "990" CACHE STRING "FOC |iq| clamp in ADC LSB (990 = 1.6 A, hall6 20%)")
+set(MOTOR_FOC_IQ_LSB "99" CACHE STRING "FOC |iq| clamp in ADC LSB (99 = 1.6 A at 16.17 mA/LSB, 1 mOhm shunt)")
+option(TNB_HALL6_ONLY "I2C start runs hall6 only, never the current loop" OFF)
+option(UART_LOG "PA14 USART1 log after boot (off keeps SWCLK for a live capture)" ON)
 set(MOTOR_FOC_ID_LSB "" CACHE STRING "FOC |id| clamp in ADC LSB (default = MOTOR_FOC_IQ_LSB)")
 set(MOTOR_HALL6_KICK_DUTY "" CACHE STRING "Hall6 kick duty percent (default 6)")
 set(MOTOR_HALL6_RUN_DUTY "" CACHE STRING "Hall6 run duty percent (default 7)")
@@ -151,6 +157,20 @@ if(MOTOR_PWM_BKIN)
   add_compile_definitions(MOTOR_PWM_BKIN=1)
 else()
   add_compile_definitions(MOTOR_PWM_BKIN=0)
+endif()
+if(TNB_HALL6_ONLY)
+  add_compile_definitions(TNB_HALL6_ONLY=1)
+endif()
+if(NOT UART_LOG)
+  add_compile_definitions(UART_LOG_ENABLE=0)
+endif()
+if(MOTOR_VBUS_SENSE)
+  add_compile_definitions(MOTOR_VBUS_SENSE=1)
+else()
+  add_compile_definitions(MOTOR_VBUS_SENSE=0)
+endif()
+if(NOT "${MOTOR_VBUS_FIXED_MV}" STREQUAL "")
+  add_compile_definitions(MOTOR_VBUS_FIXED_MV=${MOTOR_VBUS_FIXED_MV})
 endif()
 foreach(_motor_param MOTOR_DUTY_PCT MOTOR_TIM1_DTG MOTOR_PULSE_COUNTS MOTOR_STEP_MS
                      MOTOR_PHASE_OFFSET MOTOR_HALL6_KICK_DUTY MOTOR_HALL6_RUN_DUTY
