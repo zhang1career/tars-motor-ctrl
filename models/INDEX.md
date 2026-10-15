@@ -1,6 +1,6 @@
 # benchgate 记录目录
 
-> 由 benchgate 自动生成，请勿手改。源数据：`models/index.jsonl`，共 83 条。生成于 2026-10-14 17:47。
+> 由 benchgate 自动生成，请勿手改。源数据：`models/index.jsonl`，共 140 条。生成于 2026-10-15 18:32。
 
 ## 当前状态
 
@@ -8,15 +8,77 @@
 
 | 类型 | 最近一次 | 结论 | 输入 | 摘要 | 记录 |
 |---|---|---|---|---|---|
-| 采集 | 2026-10-14 17:47 | 正常 | — | tick_cyc_max, tick_cyc_min, tick_cyc_edge, tick_cyc_steady 等 6 路 · stm32f030-tick | `20261014T094740Z_1446` |
+| 采集 | 2026-10-15 18:32 | 正常 | — | crit1_n, crit1_id_mean, crit1_iq_mean, crit1_theta_span 等 26 路 | `20261015T103258Z_5438` |
 
 ## 记录（最新在前，最多 300 条）
 
+
+### 2026-10-15
+
+| 时间 | 类型 | 结论 | 摘要 | 目的 | 记录 |
+|---|---|---|---|---|---|
+| 18:32 | 采集 | 正常 | crit1_n, crit1_id_mean, crit1_iq_mean, crit1_theta_span 等 26 路 | Rescore the four current-loop checks on the firmware that includes stall recovery | `20261015T103258Z_5438` |
+| 18:32 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 8 | 重测电流环判据4的电压：iq 阶跃到 300 mA 时 vd vq 是否顶到上限 | `20261015T103232Z_c2ab` |
+| 18:32 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 8 | 重测电流环判据2的电压：id 阶跃到 6 LSB 时 vd vq 是否顶到上限 | `20261015T103222Z_010e` |
+| 18:31 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 30 | 重测电流环判据4：转矩模式 iq 从 200 mA 阶跃到 300 mA | `20261015T103120Z_0252` |
+| 18:30 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 30 | 重测电流环判据2和3：200 mA 转动时 id 从 0 阶跃到 6 LSB | `20261015T103036Z_a967` |
+| 18:14 | 采集 | 正常 | tick_first, tick_min, tick_common, tick_common_n 等 9 路 | Remeasure the control tick after the recovery path stopped resetting a moving rotor | `20261015T101410Z_f42e` |
+| 17:42 | 采集 | 正常 | restarts_before, sixstep_samples_before, torque_samples_before, bus_max_a_before 等 11 路 | Compare stall false-triggers during a loaded spin before and after ignoring slow hall edges | `20261015T094258Z_6809` |
+| 17:26 | 采集 | 正常 | tick_first, tick_steady_min, tick_steady_common, tick_steady_max 等 7 路 · MotorTick_OnAdcComplete | 32-tick remeasure after stall restart waits for a fast six-step sector before handing back to the current loop | `20261015T092649Z_7922` |
+| 16:10 | 采集 | 正常 | tick_first, tick_steady_min, tick_steady_common, tick_steady_max 等 7 路 · MotorTick_OnAdcComplete | 32-tick remeasure after reverting stall crawl and lead; hold the hall center and drop the pre-stall speed | `20261015T081054Z_fce2` |
+| 15:59 | 采集 | 正常 | tick_first, tick_steady_min, tick_steady_common, tick_steady_max 等 7 路 · MotorTick_OnAdcComplete | 32-tick remeasure after stall lead-hold: angle stays one sector ahead instead of free-running | `20261015T075915Z_1e67` |
+| 15:50 | 采集 | 正常 | tick_first, tick_steady_min, tick_steady_common, tick_steady_max 等 7 路 · MotorTick_OnAdcComplete | 32-tick remeasure after stall crawl: angle creeps instead of holding the hall center | `20261015T075043Z_651f` |
+| 15:44 | 采集 | 正常 | edge_cycles, steady_common_cycles, steady_short_cycles, flash_bytes 等 5 路 | 刹车后不再沿用旧速度。桥关断 32 拍：换边 1581，常见稳态 1222。 | `20261015T074436Z_14be` |
+| 15:24 | 采集 | 正常 | edge_cycles, steady_short_cycles, steady_common_cycles, steady_common_count 等 6 路 | 停转恢复改完之后量 32 拍。换边 1557，短稳态 1202，常见的是 1212。 | `20261015T072420Z_dd21` |
+| 15:23 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 8 | 停转后角度回到霍尔中心，先确认正常转动没有被误判成停转 | `20261015T072357Z_01f3` |
+| 14:43 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 20 | 正转 200 毫安给人看，状态查询密一些，看完就停 | `20261015T064340Z_a8c3` |
+| 14:42 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 正转 200 毫安给人看，看完就停 | `20261015T064228Z_c1df` |
+| 14:32 | 采集 | 正常 | id_mean_lsb, iq_mean_lsb, theta_travel_q15, cmd | 方向 1 转了一次，霍尔角度表的另一行跑到了。d 轴均值 0.04 个刻度，q 轴均值 12.48。 | `20261015T063250Z_9659` |
+| 14:32 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 方向 1 转一次，让霍尔角度表的另一行真正跑到 | `20261015T063213Z_83e1` |
+| 14:31 | 采集 | 正常 | id_mean_lsb, iq_mean_lsb, samples, cmd | 当前镜像上转子停着、q 轴指令 0。d 轴均值 0.013 个刻度，q 轴均值 -0.019 个刻度。 | `20261015T063159Z_4540` |
+| 14:31 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 当前镜像上转子停着、q 轴指令 0，看 d 轴和 q 轴均值 | `20261015T063137Z_8b10` |
+| 14:31 | 采集 | 正常 | id_step_vd_abs_max_mv, id_step_vq_max_mv, iq_step_vd_abs_max_mv, iq_step_vq_max_mv 等 5 路 | 两次阶跃的 d、q 轴电压都没有顶到上限，饱和标志为 0。 | `20261015T063102Z_6509` |
+| 14:30 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 2 | q 轴从 200 毫安到 300 毫安时看 d、q 轴电压有没有顶到上限 | `20261015T063042Z_b2db` |
+| 14:30 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 2 | d 轴阶跃时看 d、q 轴电压有没有顶到上限 | `20261015T063032Z_2a5d` |
+| 14:30 | 采集 | 正常 | windows, cross_80_ms, first_1ms_mean_lsb, roll_1ms_peak_lsb 等 13 路 | q 轴从 12 个刻度阶跃到 18，30 窗按指令列对齐。1 毫秒内到 80%，2 毫秒后均值 17.981。按 1 毫秒平均看，超调约 9.5%。 | `20261015T063016Z_ebd7` |
+| 14:29 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 30 | q 轴从 200 毫安阶跃到 300 毫安，抽样 0.1 毫秒，30 窗，用指令列找阶跃时刻 | `20261015T062928Z_ce0f` |
+| 14:28 | 采集 | 正常 | windows, cross_80_ms, first_1ms_mean_lsb, roll_1ms_peak_lsb 等 13 路 | d 轴阶跃 6 个刻度、30 窗按指令列对齐。1 毫秒内到 80%，2 毫秒后均值 6.005。按 1 毫秒平均看，超调约 3.6%。 | `20261015T062842Z_21c6` |
+| 14:27 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 30 | d 轴阶跃 6 个刻度，抽样 0.1 毫秒，30 窗，用指令列找阶跃时刻 | `20261015T062717Z_df7b` |
+| 14:26 | 采集 | 正常 | edge_cycles, steady_short_cycles, steady_short_count, steady_max_cycles 等 6 路 | 电流环轨迹第 4 列改成指令之后，桥关断量 32 拍。这一版镜像换边 1524，短稳态 1193。短的那条没有变长。 | `20261015T062632Z_cbd0` |
+| 14:24 | 采集 | 正常 | tick_max, overrun, tick_total, tick_sum | 退掉换边推迟存点之后的一次 200 毫安正转。最长拍 1673，没有超时。 | `20261015T062458Z_9bd2` |
+| 14:24 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 退掉换边推迟存点之后，读一次 200 毫安正转的最长拍 | `20261015T062417Z_10a8` |
+| 14:23 | 采集 | 正常 | edge_cycles, steady_short_cycles, steady_floor_cycles, steady_floor_count 等 7 路 | 退掉换边推迟存点之后，桥关断时量 32 拍。换边那拍 1554，短的稳态仍是 1212，后面 23 拍落在 8% 占空比下限那条路径 1275。 | `20261015T062353Z_4ddb` |
+| 13:21 | 采集 | 正常 | iq_base_lsb, iq_cmd_lsb, hit_80_ms, peak_1ms_lsb 等 10 路 | 电流环第4条：转矩模式下 q 轴阶跃约 100 mA，看 1 ms、2 ms 和电压上限 | `20261015T052117Z_740e` |
+| 13:20 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 4 | 电流环第4条：q 轴从 200 毫安阶跃到 300 毫安，同时看电压 | `20261015T052032Z_b84d` |
+| 13:18 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 4 | 电流环第4条：转矩模式 q 轴从 12 阶跃到 18 个刻度，同时看电压 | `20261015T051836Z_35de` |
+| 13:18 | 采集 | 正常 | stair0_mean, stair0_n, stair1_mean, stair1_n 等 13 路 | 电流环第3条：d 轴保持 6 个刻度转过一圈，六个扇区的均值 | `20261015T051822Z_9f74` |
+| 13:17 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 3 | 电流环第3条：d 轴保持 6 个刻度，盖住一圈的六个扇区 | `20261015T051742Z_e041` |
+| 13:17 | 采集 | 正常 | id_base_lsb, hit_80_ms, overshoot_pct, id_tail_lsb 等 10 路 | 电流环第2条：200 mA 慢转时 d 轴阶跃 6 个刻度，四窗平均后判 1 ms、2 ms 和电压上限 | `20261015T051720Z_9191` |
+| 13:15 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 2 | 电流环第2条：d 轴阶跃时 vd、vq 是否顶到上限 | `20261015T051551Z_b9cc` |
+| 13:13 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 4 | 电流环第2条重采：窗口 32 毫秒，d 轴阶跃 6 个刻度落在记录里 | `20261015T051355Z_307f` |
+| 13:11 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 4 | 电流环第2条：200毫安 q 轴慢转时，d 轴阶跃 6 个刻度 | `20261015T051118Z_e2d5` |
+| 12:10 | 采集 | 正常 | edge_cycles, steady_common, steady_min, steady_floor 等 11 路 | Hall change is a table load and the trace body runs only on the store tick. Confirm the long tick came down on a 200 mA spin. | `20261015T041035Z_1a92` |
+| 12:10 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 当前固件的 200 mA 转动，确认整拍最长周期 | `20261015T041011Z_8d17` |
+| 12:06 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 换边不再同时存轨迹之后的 200 mA 转动，用来读整拍最长周期 | `20261015T040632Z_4708` |
+| 12:03 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 固定换边和轨迹闸门之后的 200 mA 转动，用来读整拍最长周期 | `20261015T040347Z_28df` |
+| 12:03 | 采集 | 正常 | edge_cycles, steady_min, steady_common, steady_max 等 7 路 | Hall edge is a fixed table load and trace runs only on the store tick. Stub of 32 current-loop ticks, bridge off. | `20261015T040325Z_a859` |
+| 11:53 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 分段计一拍周期：保护、交接、电流环、六步 | `20261015T035316Z_ce9d` |
+| 11:18 | 采集 | 正常 | id_mean_lsb, iq_mean_lsb, elec_revs, park_off_q16 等 13 路 | 核对实测扇区宽度进入角度之后，200毫安慢转的 d 轴是否还在 1 个刻度内 | `20261015T031821Z_a06b` |
+| 11:17 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 实测扇区宽度进角度之后，200毫安慢转核对 d 轴均值 | `20261015T031748Z_406f` |
+| 11:12 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 200毫安慢转，采新楼梯索引下六个扇区停留的近期平均 | `20261015T031215Z_30df` |
+| 11:11 | 采集 | 正常 | edge_cycles, steady_min, steady_common, steady_max 等 8 路 | 核对扇区停留平均加进边界之后的一拍周期 | `20261015T031123Z_9fdf` |
+| 10:49 | 采集 | 正常 | dwell0, dwell1, dwell2, dwell3 等 10 路 | 判断新楼梯索引下的一圈扇区停留能不能写进宽度表 | `20261015T024906Z_5638` |
+| 10:48 | 采集 | 正常 | ocp_kind, ocp_phase, ocp_lsb, ocp_lsb_abs 等 10 路 | 记下六步阶段 V 相软件过流，桥已关，没有再次启动 | `20261015T024854Z_cfe5` |
+| 10:47 | 采集 | 正常 | code, stopped, i24 | 200毫安、2毫秒采样，平均新楼梯索引下的扇区停留 | `20261015T024702Z_78ce` |
+| 10:40 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 200毫安慢转，重测新楼梯索引下六个扇区的停留拍数 | `20261015T024056Z_34b8` |
+| 10:38 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 慢转重测新楼梯索引下六个扇区的停留拍数 | `20261015T023830Z_00e3` |
 
 ### 2026-10-14
 
 | 时间 | 类型 | 结论 | 摘要 | 目的 | 记录 |
 |---|---|---|---|---|---|
+| 18:37 | 采集 | 正常 | tick_cyc_edge, tick_cyc_min, tick_cyc_max, tick_cyc_cluster 等 6 路 · stm32f030-tick | Remeasure the current-loop hall edge after the review code fixes. Edge 1699 cycles, steady minimum 1210. Bridge stayed off. | `20261014T103713Z_e471` |
+| 18:11 | 采集 | 正常 | tick_cyc_edge, tick_cyc_min, tick_cyc_max, angle_edge_cyc 等 7 路 · stm32f030-tick | Remove Newton from the hall-edge divide. Forced current-loop edge dropped from 1811 to 1671 cycles. Steady ticks min 1200. Bridge stayed off. | `20261014T101151Z_811c` |
 | 17:47 | 采集 | 正常 | tick_cyc_max, tick_cyc_min, tick_cyc_edge, tick_cyc_steady 等 6 路 · stm32f030-tick | Confirm whether a current-loop hall-edge tick can exceed 2400 cycles. Forced edge measured 1811, steady interpolating ticks 1206 to 1220, bridge stayed off. | `20261014T094740Z_1446` |
 | 17:25 | 采集 | 正常 | id_mean_lsb, iq_mean_lsb, n_points, hall 等 12 路 | 复跑静止、iq 0 的电流环窗，并把清零之后的最长一拍算作电流环自己的。 | `20261014T092534Z_0dba` |
 | 17:24 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | 复跑完成标准第1条：转子静止、iq 0；并把六步和电流环的最长一拍分开 | `20261014T092418Z_4c3c` |
