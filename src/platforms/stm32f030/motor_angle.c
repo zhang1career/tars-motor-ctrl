@@ -1,4 +1,5 @@
 #include "motor_angle.h"
+#include "fx_udiv.h"
 
 volatile motor_angle_state_t g_motor_angle;
 
@@ -134,15 +135,32 @@ static void angle_on_edge(uint8_t sector)
     return;
   }
 
-  if (sector == ((prev + 1U) % MOTOR_ANGLE_SECTORS))
   {
-    dir = 1;
+    uint8_t prev_plus1 = (uint8_t)(prev + 1U);
+    uint8_t sector_plus1 = (uint8_t)(sector + 1U);
+
+    if (prev_plus1 >= MOTOR_ANGLE_SECTORS)
+    {
+      prev_plus1 = 0U;
+    }
+    if (sector_plus1 >= MOTOR_ANGLE_SECTORS)
+    {
+      sector_plus1 = 0U;
+    }
+    if (sector == prev_plus1)
+    {
+      dir = 1;
+    }
+    else if (prev == sector_plus1)
+    {
+      dir = -1;
+    }
+    else
+    {
+      dir = 0;
+    }
   }
-  else if (prev == ((sector + 1U) % MOTOR_ANGLE_SECTORS))
-  {
-    dir = -1;
-  }
-  else
+  if (dir == 0)
   {
     /* Missed edge or glitch. Snap to the new anchor but keep omega and
      * dir: zeroing them freezes Park on a locked vector, which is how
@@ -174,8 +192,8 @@ static void angle_on_edge(uint8_t sector)
   predicted = s_sector_ticks[sector];
   if ((predicted != 0U) && (s_sector_ticks[prev] != 0U) && (measured != 0U))
   {
-    uint32_t scaled = ((uint32_t)predicted * (uint32_t)measured) /
-                      (uint32_t)s_sector_ticks[prev];
+    uint32_t scaled = Fx_QuotU((uint32_t)predicted * (uint32_t)measured,
+                               (uint32_t)s_sector_ticks[prev]);
 
     predicted = (scaled == 0U) ? 1U : (uint16_t)((scaled > 0xFFFFU) ? 0xFFFFU : scaled);
   }
@@ -186,10 +204,11 @@ static void angle_on_edge(uint8_t sector)
 
   s_sector_ticks[prev] = measured;
 
-  /* One division per edge, not per tick: at 24 electrical rev/s that is 144 a
-   * second, which is nothing even without a hardware divider. */
+  /* 9-bit reciprocal, no Newton, about 0.4% of the quotient. Once per
+   * hall edge. The scaled dwell above can wrap the ±1 correction when
+   * both tick counts are saturated; the next line clamps that to 0xFFFF. */
   g_motor_angle.omega_q8 =
-      (int32_t)(((uint32_t)SECTOR_SPAN << 8) / (uint32_t)predicted);
+      (int32_t)Fx_QuotU((uint32_t)SECTOR_SPAN << 8, (uint32_t)predicted);
   if (dir < 0)
   {
     g_motor_angle.omega_q8 = -g_motor_angle.omega_q8;
@@ -268,9 +287,22 @@ void MotorAngle_Update(uint8_t hall)
       travelled = -limit;
     }
 
-    base = (g_motor_angle.dir > 0) ? angle_anchor(g_motor_angle.sector)
-                                   : angle_anchor((uint8_t)((g_motor_angle.sector + 1U) %
-                                                            MOTOR_ANGLE_SECTORS));
+    if (g_motor_angle.dir > 0)
+    {
+      base = angle_anchor(g_motor_angle.sector);
+    }
+    else
+    {
+      /* sector here is a live hall code, so it is 0..5. One subtract
+       * matches (sector + 1) % MOTOR_ANGLE_SECTORS. */
+      uint8_t next = (uint8_t)(g_motor_angle.sector + 1U);
+
+      if (next >= MOTOR_ANGLE_SECTORS)
+      {
+        next = (uint8_t)(next - MOTOR_ANGLE_SECTORS);
+      }
+      base = angle_anchor(next);
+    }
     g_motor_angle.theta = (uint16_t)((int32_t)base + travelled);
   }
   angle_accum();

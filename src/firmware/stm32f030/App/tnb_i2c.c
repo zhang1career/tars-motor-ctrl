@@ -103,9 +103,11 @@ void TnbNode_ApplyI2cAddress(void)
   I2C1->OAR2 = 0U;
   I2C1->CR1 = I2C_CR1_PE | I2C_CR1_ADDRIE | I2C_CR1_RXIE | I2C_CR1_TXIE |
               I2C_CR1_STOPIE | I2C_CR1_NACKIE | I2C_CR1_ERRIE | I2C_CR1_GCEN |
-              I2C_CR1_NOSTRETCH | (15U << I2C_CR1_DNF_Pos);
+              (15U << I2C_CR1_DNF_Pos);
 
-  HAL_NVIC_SetPriority(I2C1_IRQn, 0, 0);
+  /* 节拍优先级更高。允许时钟拉伸：这个中断来晚了，硬件会把 SCL 拉住，
+   * 直到 TXDR 或 RXDR 被处理。 */
+  HAL_NVIC_SetPriority(I2C1_IRQn, 2, 0);
   HAL_NVIC_EnableIRQ(I2C1_IRQn);
 }
 
@@ -136,8 +138,6 @@ void TnbI2c_IRQHandler(void)
     {
       commit_write();
       load_tx(kind);
-      TnbMotor_PollIsr();
-      TnbNode_RefreshMot();
     }
   }
 

@@ -51,7 +51,10 @@
 #define BOARD_ADC_IU_CH        ADC_CHANNEL_1   /* PA1 ISENSE_U ← INA240_U.OUT */
 #define BOARD_ADC_IV_CH        ADC_CHANNEL_2   /* PA2 ISENSE_V ← INA240_V.OUT */
 #define BOARD_ADC_IW_CH        ADC_CHANNEL_3   /* PA3 ISENSE_W ← INA240_W.OUT */
-#define BOARD_ADC_VBUS_CH      ADC_CHANNEL_4   /* PA4 VSENSE_12V, R30 39k / R31 10k */
+#define BOARD_ADC_VBUS_CH      ADC_CHANNEL_4   /* PA4 VSENSE_12V, R30 39k / R31 10k.
+                                             * Still on +12V. Not the 24 V motor
+                                             * bus; firmware ignores it until the
+                                             * divider is moved. */
 #define BOARD_ADC_VBOOST_CH    ADC_CHANNEL_5   /* PA5 VSENSE_V_BOOST, R32 68k / R33 10k */
 
 /* Current front end: INA240A2 (gain 50) across the 10 mOhm half-bridge shunt,
@@ -64,7 +67,9 @@
  */
 #define BOARD_ISENSE_ZERO_CODE   2048
 #define BOARD_ISENSE_GAIN        50
-#define BOARD_SHUNT_MILLIOHM     10
+/* R0 on the 24 V half-bridge is 1 mOhm: 16.17 mA per ADC LSB. The LM339
+ * window on ISENSE is sized for 10 mOhm, so its trip point is ~10x higher. */
+#define BOARD_SHUNT_MILLIOHM     1
 
 /* Divider ratios as integer fractions, for scaling without floating point. */
 #define BOARD_VBUS_DIV_NUM       49   /* (39k + 10k) / 10k */

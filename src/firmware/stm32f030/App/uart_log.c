@@ -6,6 +6,10 @@
  * so connect-under-reset can still flash.
  */
 
+#ifndef UART_LOG_ENABLE
+#define UART_LOG_ENABLE 1
+#endif
+
 #define UART_LOG_SWD_HOLD_MS  300U
 #define UART_LOG_PCLK         48000000U
 #define UART_LOG_BAUD         115200U
@@ -14,6 +18,10 @@ static uint8_t s_ready;
 
 void UartLog_Init(void)
 {
+#if UART_LOG_ENABLE == 0
+  /* Leave PA14 as SWCLK so a running capture can be read over SWD. */
+  return;
+#endif
   GPIO_InitTypeDef gpio = {0};
   uint32_t t0 = HAL_GetTick();
 

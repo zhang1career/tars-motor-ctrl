@@ -72,7 +72,9 @@ cmake -S src/firmware/stm32f030 -B src/firmware/stm32f030/build/Release -G Ninja
 | `MOTOR_START_BENCH` | 上电跑控制 ISR 周期数台架（电机不通电），结果在 `g_ctrl_bench` |
 | `MOTOR_ANGLE` | Hall 连续电角度（默认 ON） |
 | `MOTOR_ANGLE_OFFSET_Q16` / `MOTOR_ANGLE_ANCHOR_TRIM` | 角度标定结果（65536/电周期），阶段 E 用 `id` 测定，默认全零 |
-| `MOTOR_ADC` | PWM 同步的相电流 + 母线电压采样（默认 ON） |
+| `MOTOR_ADC` | PWM 同步的相电流采样（默认 ON）。序列里仍含 PA4，但默认不把它当母线 |
+| `MOTOR_VBUS_SENSE` | 用 PA4 `VSENSE_12V` 当电机母线（默认 **OFF**）。分压仍在 +12V 上，功率级已是 24 V，改版采样 24 V 之前不要打开 |
+| `MOTOR_VBUS_FIXED_MV` | 感测关闭时调制用的母线，毫伏（默认 **24000**） |
 | `MOTOR_ADC_LEAD_COUNTS` | ADC 序列比计数峰值提前多少计数（默认 **72 = 1.5 µs**）。168/336 在 vq 5–6.2 V 会把 i0 偏到 −20～−36 mA |
 | `MOTOR_ADC_STROBE` | 在 ADC 序列结束时脉冲 TP1，供示波器验证采样点（默认 **OFF**）。它的沿会在 ISENSE 上耦合出百 mV 级尖峰，只在示波器会话里开 |
 | `MOTOR_TRACE` | 逐拍采样缓冲（默认 **OFF**；开约 2 KB RAM，与 I²C 默认图互斥） |

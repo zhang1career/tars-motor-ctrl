@@ -1,14 +1,41 @@
 #include "motor_pwm.h"
 #include "board_pins.h"
+#include "hall6.h"
 #include "main.h"
+#include "reset_diag.h"
+#include <stddef.h>
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
 #include "motor_adc.h"
 #endif
+
+_Static_assert(offsetof(motor_pwm_prot_t, ocp_hold) == 17,
+               "ocp_hold moved; host reads this byte");
+_Static_assert(offsetof(motor_pwm_prot_t, ocp_zero) == 20,
+               "ocp_zero moved; host reads these halfwords");
+_Static_assert(offsetof(motor_pwm_prot_t, ocp_zero_ready) == 26,
+               "ocp_zero_ready moved; host reads this byte");
 
 TIM_HandleTypeDef htim1;
 volatile motor_pwm_prot_t g_motor_pwm_prot;
 volatile uint8_t g_motor_pwm_force_trip;
 volatile uint8_t g_motor_pwm_dt_on;
+
+/* Cleared by HardwareSafe. ChargeBootstrap refuses to run again until then.
+ * s_boot_pending stays set through the low-side window. A start that runs
+ * inside the I2C interrupt only arms that window; the thread path waits it
+ * out. SysTick cannot preempt that interrupt, so the wait must not spin there. */
+static uint8_t s_boot_charged;
+static uint8_t s_boot_pending;
+static uint32_t s_boot_t0;
+/* Bridge-off zero, learned in the main loop. The tick starts only after
+ * MOE is already on, so the ISR must not be the one collecting it.
+ * Dropped if MOE turns on before 64 calm samples. */
+static int32_t s_ocp_zero_sum[3];
+static uint8_t s_ocp_zero_n;
+
+#ifndef MOTOR_PWM_BOOT_MS
+#define MOTOR_PWM_BOOT_MS 40U
+#endif
 
 #define MOTOR_TIM1_ARR  ((MOTOR_PWM_TIM_CLK / (2U * MOTOR_PWM_HZ)) - 1U)
 
@@ -125,6 +152,64 @@ void MotorPwm_SetPhase(motor_phase_mode_t u, motor_phase_mode_t v, motor_phase_m
   motor_pwm_force_update(tim);
 }
 
+void MotorPwm_SetPairCcr(uint8_t pwm_idx, uint8_t low_idx, uint16_t ccr)
+{
+  TIM_TypeDef *tim;
+  volatile uint32_t *ccr_reg[3];
+  static const uint32_t en[3] = {
+      TIM_CCER_CC1E, TIM_CCER_CC2E, TIM_CCER_CC3E};
+  static const uint32_t ne[3] = {
+      TIM_CCER_CC1NE, TIM_CCER_CC2NE, TIM_CCER_CC3NE};
+  uint32_t arr;
+  uint32_t pulse;
+  uint8_t k;
+
+  if (g_motor_pwm_prot.latched != 0U)
+  {
+    return;
+  }
+  if ((pwm_idx > 2U) || (low_idx > 2U) || (pwm_idx == low_idx))
+  {
+    return;
+  }
+
+  tim = htim1.Instance;
+  arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
+  pulse = ccr;
+  if (pulse > arr)
+  {
+    pulse = arr;
+  }
+
+  ccr_reg[0] = &tim->CCR1;
+  ccr_reg[1] = &tim->CCR2;
+  ccr_reg[2] = &tim->CCR3;
+
+  for (k = 0U; k < 3U; k++)
+  {
+    if (k == pwm_idx)
+    {
+      tim->CCER |= (en[k] | ne[k]);
+      *ccr_reg[k] = pulse;
+    }
+    else if (k == low_idx)
+    {
+      /* Same as MOTOR_PHASE_LOW: OCxN follows OCxREF, so OCxREF stays active. */
+      tim->CCER &= ~en[k];
+      tim->CCER |= ne[k];
+      *ccr_reg[k] = arr + 1U;
+    }
+    else
+    {
+      tim->CCER &= ~(en[k] | ne[k]);
+      *ccr_reg[k] = 0U;
+    }
+  }
+
+  motor_pwm_disable_oc_preload(tim);
+  motor_pwm_force_update(tim);
+}
+
 #pragma GCC pop_options
 
 /* Below this the current sign is noise (the front end reads +-3 mA), and
@@ -193,11 +278,11 @@ void MotorPwm_SetDuties(float da, float db, float dc, float ia, float ib, float 
                 TIM_CCER_CC2NE | TIM_CCER_CC3E | TIM_CCER_CC3NE);
 }
 
-/* 0.05 A / 1.617 mA per LSB. Below this the current sign is noise (the front
- * end reads +-3 mA), and flipping the compensation on noise would inject a
- * square wave at the noise rate. Ramp linearly through the band instead. */
+/* 0.05 A / 16.17 mA per LSB. Below this the current sign is noise, and
+ * flipping the compensation on noise would inject a square wave at the
+ * noise rate. Ramp linearly through the band instead. */
 #ifndef MOTOR_PWM_DT_COMP_BAND_LSB
-#define MOTOR_PWM_DT_COMP_BAND_LSB 31
+#define MOTOR_PWM_DT_COMP_BAND_LSB 3
 #endif
 #ifndef MOTOR_PWM_DT_COMP
 #define MOTOR_PWM_DT_COMP 1
@@ -215,6 +300,11 @@ static int32_t motor_pwm_dt_comp_lsb(int32_t i_lsb)
   if (i_lsb < -band)
   {
     return -half_dt;
+  }
+  /* Exact only when band divides half_dt. Do not hardcode the quotient. */
+  if ((half_dt % band) == 0)
+  {
+    return i_lsb * (half_dt / band);
   }
   return (i_lsb * half_dt) / band;
 }
@@ -369,6 +459,33 @@ static void motor_pwm_bkin_pin(void)
   HAL_GPIO_Init(BOARD_PWM_BKIN_PORT, &gpio);
 }
 
+static int32_t s_trip_phase = -1;
+static int32_t s_trip_lsb;
+
+static void motor_pwm_note_trip(uint8_t kind)
+{
+  motor_hall6_snapshot_t snap;
+  uint32_t ctx;
+
+  if (g_motor_pwm_prot.ocp_hold != 0U)
+  {
+    return;
+  }
+  MotorHall6_GetSnapshot(&snap);
+  ctx = (uint32_t)snap.hall_raw;
+  if (snap.kick != 0U)
+  {
+    ctx |= 0x100U;
+  }
+  g_reset_diag[RESET_DIAG_OCP_KIND] = kind;
+  g_reset_diag[RESET_DIAG_OCP_PHASE] = (uint32_t)s_trip_phase;
+  g_reset_diag[RESET_DIAG_OCP_LSB] = (uint32_t)s_trip_lsb;
+  g_reset_diag[RESET_DIAG_OCP_CTX] = ctx;
+  g_reset_diag[RESET_DIAG_OCP_TICK] = HAL_GetTick();
+  g_motor_pwm_prot.ocp_kind = kind;
+  g_motor_pwm_prot.ocp_hold = 1U;
+}
+
 static void motor_pwm_trip(uint8_t sw)
 {
   if (g_motor_pwm_prot.latched == 0U)
@@ -377,6 +494,7 @@ static void motor_pwm_trip(uint8_t sw)
     {
       g_motor_pwm_prot.sw_trips++;
     }
+    motor_pwm_note_trip(sw != 0U ? 1U : 2U);
     g_motor_pwm_prot.latched = 1U;
   }
   MotorPwm_HardwareSafe();
@@ -386,6 +504,135 @@ uint8_t MotorPwm_IsLatched(void)
 {
   return g_motor_pwm_prot.latched;
 }
+
+void MotorPwm_PollOcpZero(void)
+{
+#if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
+  uint8_t k;
+  uint8_t calm = 1U;
+  int32_t sample[3];
+  const uint16_t *raw = (const uint16_t *)g_motor_adc_raw;
+  const uint8_t moe = ((TIM1->BDTR & TIM_BDTR_MOE) != 0U) ? 1U : 0U;
+
+  if (g_motor_pwm_prot.ocp_zero_ready != 0U)
+  {
+    return;
+  }
+  if (moe != 0U)
+  {
+    s_ocp_zero_n = 0U;
+    s_ocp_zero_sum[0] = 0;
+    s_ocp_zero_sum[1] = 0;
+    s_ocp_zero_sum[2] = 0;
+    return;
+  }
+
+  for (k = 0U; k < 3U; k++)
+  {
+    sample[k] = (int32_t)raw[k] - 2048;
+    /* A real current, or a rail stuck at 0 or full scale, is not a zero. */
+    if ((sample[k] <= -100) || (sample[k] >= 100))
+    {
+      calm = 0U;
+    }
+  }
+  if (calm == 0U)
+  {
+    s_ocp_zero_n = 0U;
+    s_ocp_zero_sum[0] = 0;
+    s_ocp_zero_sum[1] = 0;
+    s_ocp_zero_sum[2] = 0;
+    return;
+  }
+
+  s_ocp_zero_sum[0] += sample[0];
+  s_ocp_zero_sum[1] += sample[1];
+  s_ocp_zero_sum[2] += sample[2];
+  s_ocp_zero_n++;
+  if (s_ocp_zero_n >= 64U)
+  {
+    g_motor_pwm_prot.ocp_zero[0] = (int16_t)(s_ocp_zero_sum[0] / 64);
+    g_motor_pwm_prot.ocp_zero[1] = (int16_t)(s_ocp_zero_sum[1] / 64);
+    g_motor_pwm_prot.ocp_zero[2] = (int16_t)(s_ocp_zero_sum[2] / 64);
+    g_motor_pwm_prot.ocp_zero_ready = 1U;
+  }
+#else
+  g_motor_pwm_prot.ocp_zero_ready = 1U;
+#endif
+}
+
+#if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+/* Three phases, straight line. The old loop was 200 cycles of reloads. */
+static inline int32_t motor_pwm_poll_abs(unsigned k, const uint16_t *raw,
+                                        uint8_t zero_ready)
+{
+  int32_t i = (int32_t)raw[k] - 2048;
+
+  if (zero_ready != 0U)
+  {
+    i -= (int32_t)g_motor_pwm_prot.ocp_zero[k];
+  }
+  g_motor_pwm_prot.i_lsb[k] = (int16_t)i;
+  return (i < 0) ? -i : i;
+}
+
+static void motor_pwm_poll_oc(void) __attribute__((optimize("Os")));
+static void motor_pwm_poll_oc(void)
+{
+  const uint16_t *raw;
+  uint8_t zero_ready;
+  int32_t a;
+  int32_t b;
+  int32_t c;
+
+  if (g_motor_pwm_prot.latched != 0U)
+  {
+    return;
+  }
+  raw = (const uint16_t *)g_motor_adc_raw;
+  zero_ready = g_motor_pwm_prot.ocp_zero_ready;
+  a = motor_pwm_poll_abs(0U, raw, zero_ready);
+  b = motor_pwm_poll_abs(1U, raw, zero_ready);
+  c = motor_pwm_poll_abs(2U, raw, zero_ready);
+  if ((a <= (int32_t)MOTOR_PWM_OCP_LSB) && (b <= (int32_t)MOTOR_PWM_OCP_LSB) &&
+      (c <= (int32_t)MOTOR_PWM_OCP_LSB))
+  {
+    g_motor_pwm_prot.ocp_hits = 0U;
+    return;
+  }
+  if (g_motor_pwm_prot.ocp_hits < 255U)
+  {
+    g_motor_pwm_prot.ocp_hits++;
+  }
+  if (g_motor_pwm_prot.ocp_hits >= (uint8_t)MOTOR_PWM_OCP_TICKS)
+  {
+    int32_t best = -1;
+    uint8_t phase = 0U;
+
+    if (a > (int32_t)MOTOR_PWM_OCP_LSB)
+    {
+      best = a;
+      phase = 0U;
+    }
+    if ((b > (int32_t)MOTOR_PWM_OCP_LSB) && (b > best))
+    {
+      best = b;
+      phase = 1U;
+    }
+    if ((c > (int32_t)MOTOR_PWM_OCP_LSB) && (c > best))
+    {
+      best = c;
+      phase = 2U;
+    }
+    s_trip_phase = (int32_t)phase;
+    s_trip_lsb = g_motor_pwm_prot.i_lsb[phase];
+    motor_pwm_trip(1U);
+  }
+}
+#pragma GCC pop_options
+#endif
 
 void MotorPwm_PollProtect(void)
 {
@@ -399,6 +646,8 @@ void MotorPwm_PollProtect(void)
       g_motor_pwm_prot.bkin_trips++;
       g_motor_pwm_prot.bkin_seen = 1U;
     }
+    s_trip_phase = -1;
+    s_trip_lsb = 0;
     motor_pwm_trip(0U);
   }
 #else
@@ -408,46 +657,13 @@ void MotorPwm_PollProtect(void)
   if (g_motor_pwm_force_trip != 0U)
   {
     g_motor_pwm_force_trip = 0U;
+    s_trip_phase = -1;
+    s_trip_lsb = 0;
     motor_pwm_trip(1U);
   }
 
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
-  if (g_motor_pwm_prot.latched == 0U)
-  {
-    uint8_t k;
-    uint8_t hit = 0U;
-    const uint16_t *raw = (const uint16_t *)g_motor_adc_raw;
-
-    for (k = 0U; k < 3U; k++)
-    {
-      int32_t i = (int32_t)raw[k] - 2048;
-
-      g_motor_pwm_prot.i_lsb[k] = (int16_t)i;
-      if (i < 0)
-      {
-        i = -i;
-      }
-      if (i > (int32_t)MOTOR_PWM_OCP_LSB)
-      {
-        hit = 1U;
-      }
-    }
-    if (hit != 0U)
-    {
-      if (g_motor_pwm_prot.ocp_hits < 255U)
-      {
-        g_motor_pwm_prot.ocp_hits++;
-      }
-      if (g_motor_pwm_prot.ocp_hits >= (uint8_t)MOTOR_PWM_OCP_TICKS)
-      {
-        motor_pwm_trip(1U);
-      }
-    }
-    else
-    {
-      g_motor_pwm_prot.ocp_hits = 0U;
-    }
-  }
+  motor_pwm_poll_oc();
 #endif
 }
 
@@ -463,6 +679,8 @@ void MotorPwm_HardwareSafe(void)
   tim->CCER = 0U;
   tim->BDTR &= ~TIM_BDTR_MOE;
   motor_pwm_clear_break(tim);
+  s_boot_charged = 0U;
+  s_boot_pending = 0U;
 }
 
 void MotorPwm_PinsIdle(void)
@@ -622,8 +840,21 @@ int MotorPwm_ArmOutputs(void)
   return motor_pwm_start_channels();
 }
 
+void MotorPwm_ClearOcpHold(void)
+{
+  g_motor_pwm_prot.ocp_hold = 0U;
+  g_motor_pwm_prot.ocp_kind = 0U;
+  g_motor_pwm_prot.latched = 0U;
+  g_motor_pwm_prot.bkin_seen = 0U;
+  g_motor_pwm_prot.ocp_hits = 0U;
+}
+
 void MotorPwm_MoeEnable(void)
 {
+  if (g_motor_pwm_prot.ocp_hold != 0U)
+  {
+    return;
+  }
 #if MOTOR_PWM_BKIN
   if (HAL_GPIO_ReadPin(BOARD_NFAULT_PORT, BOARD_NFAULT_PIN) == GPIO_PIN_RESET)
   {
@@ -638,6 +869,71 @@ void MotorPwm_MoeEnable(void)
   __HAL_TIM_MOE_ENABLE(&htim1);
 }
 
+int MotorPwm_BootstrapReady(void)
+{
+  if (s_boot_pending == 0U)
+  {
+    return 1;
+  }
+  if ((HAL_GetTick() - s_boot_t0) < MOTOR_PWM_BOOT_MS)
+  {
+    return 0;
+  }
+  if (((htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U) ||
+      (g_motor_pwm_prot.latched != 0U))
+  {
+    s_boot_pending = 0U;
+    return 0;
+  }
+  s_boot_pending = 0U;
+  s_boot_charged = 1U;
+  return 1;
+}
+
+void MotorPwm_ChargeBootstrap(void)
+{
+  if (g_motor_pwm_prot.ocp_hold != 0U)
+  {
+    return;
+  }
+  if ((s_boot_charged != 0U) || (s_boot_pending != 0U))
+  {
+    return;
+  }
+#if MOTOR_PWM_BKIN
+  if (HAL_GPIO_ReadPin(BOARD_NFAULT_PORT, BOARD_NFAULT_PIN) == GPIO_PIN_RESET)
+  {
+    return;
+  }
+#endif
+
+  /* VDD is 12 V. The external 12 V boost cannot lift HB once a phase
+   * node is at the 24 V bus, so each driver has to charge from VDD
+   * while its own low side holds that node at ground. */
+  g_motor_pwm_prot.latched = 0U;
+  MotorPwm_SetPhase(MOTOR_PHASE_LOW, MOTOR_PHASE_LOW, MOTOR_PHASE_LOW, 0U);
+  MotorPwm_MoeEnable();
+  if ((htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
+  {
+    return;
+  }
+
+  s_boot_t0 = HAL_GetTick();
+  s_boot_pending = 1U;
+  if (__get_IPSR() != 0U)
+  {
+    return;
+  }
+  while (MotorPwm_BootstrapReady() == 0)
+  {
+    IWDG->KR = 0xAAAAU;
+    if (s_boot_pending == 0U)
+    {
+      return;
+    }
+  }
+}
+
 int MotorPwm_Start(void)
 {
   if (MotorPwm_ArmOutputs() == 0)
@@ -645,8 +941,8 @@ int MotorPwm_Start(void)
     return 0;
   }
 
-  MotorPwm_MoeEnable();
-  return 1;
+  MotorPwm_ChargeBootstrap();
+  return ((htim1.Instance->BDTR & TIM_BDTR_MOE) != 0U) ? 1 : 0;
 }
 
 void MotorPwm_Stop(void)

@@ -12,11 +12,13 @@
 #include "board_pins.h"
 #include "main.h"
 
-#define MA_PER_LSB_NUM   1617
-#define MA_PER_LSB_DEN   1000
+#define MA_PER_LSB_NUM   1617   /* 16.17 mA/LSB, 1 mOhm shunt */
+#define MA_PER_LSB_DEN   100
 #define VQMAX_LINEAR_UV  6580000
 #define START_TIMEOUT_MS 8000U
-#define HALL6_DUTY_PCT   25U
+/* After the 1.5 us dead time, 15% of 24 V is ~2.9 V average, about the
+ * 2.6 V that 25% gave on the 12 V bus. */
+#define HALL6_DUTY_PCT   10U
 #define HALL6_READY_EDGES 6U
 #define HALL6_STALL_TICKS 160000U
 #define REV_W_EPS         12
@@ -32,6 +34,40 @@
 #ifndef TNB_I2C_TIMEOUT_MS
 #define TNB_I2C_TIMEOUT_MS 3000U
 #endif
+/* 1 = I2C start stays in hall6. The start timeout and HALL6_STALL_TICKS
+ * count from start, so this mode stops on HALL6_ONLY_EDGE_MS without a
+ * Hall edge instead. */
+#ifndef TNB_HALL6_ONLY
+#define TNB_HALL6_ONLY 0
+#endif
+#define HALL6_ONLY_EDGE_MS 1000U
+/* A torque-mode stop longer than this goes back through the six-step
+ * start. 200 mA does not pull a stopped rotor across a hall. */
+#define STALL_RESTART_MS  80U
+/* A loaded sector can be much slower than 80 ms. Scale the stop
+ * detector from the last real sector, and never wait more than 2 s. */
+#define STALL_RESTART_MAX_MS 2000U
+/* No forward hall edge for this long: the shaft is not accelerating.
+ * Edges that keep coming extend the same six-step attempt. */
+#define STALL_ATTEMPT_MS  500U
+/* 20 ms/sector is about 8 elec/s. Hand back only after six-step is
+ * already that fast, so the current loop does not park a moving rotor. */
+#define HALL6_RESUME_TICKS 400U
+/* Recovery needs a few fresh sectors, not the cold-start six. */
+#define HALL6_RESUME_EDGES 3U
+/* Handed over, then stopped again before the current loop was established. */
+#define STALL_BOUNCE_MS    1500U
+#define STALL_BOUNCE_EDGES 4U
+
+/* Host reads this while the motor runs. end: 1 handover, 2 no edge, 3 eight-second. */
+typedef struct __attribute__((packed)) {
+  uint8_t try_n;
+  uint8_t end;
+  uint8_t sync_n;
+  uint16_t dwell;
+  uint16_t back_ms;
+} rest_log_t;
+volatile rest_log_t g_rest;
 
 static volatile uint8_t  s_mode = TNB_MOT_MODE_SPEED;
 static volatile uint8_t  s_dir;
@@ -47,6 +83,15 @@ static volatile uint16_t s_fault;
 static volatile uint8_t  s_run_req;
 static volatile uint8_t  s_stop_req;
 static volatile uint32_t s_t0;
+static uint32_t s_h6_edges;
+static uint32_t s_h6_edge_t;
+static uint8_t s_rest_hall;
+static uint32_t s_rest_t;
+static uint32_t s_rest_period;
+static uint16_t s_rest_hand_t;
+static uint8_t s_rest_prog_hall;
+static uint8_t s_rest_foc_edges;
+static uint8_t s_rest_fast;
 
 static int32_t ma_to_lsb(int16_t ma)
 {
@@ -97,7 +142,7 @@ static void apply_dir_now(void)
 
 static uint16_t vbus_mv_now(void)
 {
-  int32_t vmv = ((int32_t)g_motor_adc_raw[MOTOR_ADC_VBUS] * 4058) >> 10;
+  int32_t vmv = MotorAdc_VbusMv();
 
   if (vmv < 0)
   {
@@ -197,13 +242,33 @@ static void apply_refs(void)
   }
 }
 
-static uint8_t hall6_spinning(const motor_hall6_snapshot_t *snap)
+static uint8_t hall6_ready(const motor_hall6_snapshot_t *snap)
 {
-  return ((snap->kick == 0U) && (snap->hall_changes >= HALL6_READY_EDGES)) ? 1U : 0U;
+  uint16_t dwell;
+  uint32_t need;
+
+  need = (s_rest_fast != 0U) ? HALL6_RESUME_EDGES : HALL6_READY_EDGES;
+  if ((snap->kick != 0U) || (snap->hall_changes < need))
+  {
+    return 0U;
+  }
+  if (s_rest_fast == 0U)
+  {
+    return 1U;
+  }
+  dwell = MotorHall6_LastDwell();
+  /* Below 40 ticks is a glitch, not a sector. Above 400 is still too
+   * slow for the 200 mA loop to keep. */
+  if ((dwell < 40U) || (dwell > HALL6_RESUME_TICKS))
+  {
+    return 0U;
+  }
+  return 1U;
 }
 
 static void start_hall6(uint8_t reset_acc)
 {
+  MotorPwm_ClearOcpHold();
   MotorApp_ApplyDefaults();
   MotorHall6_SetKickDutyPct(HALL6_DUTY_PCT);
   MotorHall6_SetDutyPct(HALL6_DUTY_PCT);
@@ -218,12 +283,132 @@ static void start_hall6(uint8_t reset_acc)
   }
   s_state = TNB_MOT_ST_HALL6;
   s_t0 = HAL_GetTick();
+  s_h6_edges = 0U;
+  s_h6_edge_t = s_t0;
   if (reset_acc != 0U)
   {
     MotorAngle_ResetAcc();
   }
   MotorPwm_MoeEnable();
   apply_refs();
+}
+
+/* The shaft was still held. Back to the current loop and try six-step
+ * again after the next quiet interval. Not a fault.
+ * why: 2 = no forward edge, 3 = the eight-second six-step limit. */
+static void end_restart_attempt(uint8_t why)
+{
+  MotorHall6_ReleasePwm();
+  MotorHall6_FocArm(0U);
+  MotorFocFx_SetMode(MOTOR_FOC_FX_CURRENT);
+  g_rest.end = why;
+  s_rest_fast = 0U;
+  s_rest_hall = MotorHall_ReadRaw();
+  s_rest_t = HAL_GetTick();
+  if (s_mode == TNB_MOT_MODE_TORQUE)
+  {
+    s_state = TNB_MOT_ST_TORQUE;
+  }
+  else
+  {
+    s_state = TNB_MOT_ST_SPEED;
+  }
+  apply_refs();
+}
+
+static void resume_hall6(void)
+{
+  MotorPwm_ClearOcpHold();
+  MotorApp_ApplyDefaults();
+  MotorHall6_SetKickDutyPct(HALL6_DUTY_PCT);
+  MotorHall6_SetDutyPct(HALL6_DUTY_PCT);
+  s_rev = 0U;
+  apply_dir_now();
+  MotorFocFx_SetMode(MOTOR_FOC_FX_OBSERVE);
+  if (MotorHall6_ResumeSync() == 0)
+  {
+    s_fault |= TNB_MOT_FLT_STALL;
+    s_state = TNB_MOT_ST_FAULT;
+    s_rest_fast = 0U;
+    return;
+  }
+  s_state = TNB_MOT_ST_HALL6;
+  s_t0 = HAL_GetTick();
+  MotorPwm_MoeEnable();
+  apply_refs();
+}
+
+static void request_handover(void)
+{
+  uint16_t dwell;
+  uint32_t ms;
+  uint32_t now;
+
+  if ((g_motor_angle.valid == 0U) || (TNB_HALL6_ONLY != 0))
+  {
+    return;
+  }
+  dwell = MotorHall6_LastDwell();
+  now = HAL_GetTick();
+  ms = (uint32_t)dwell / 20U;
+  if (ms == 0U)
+  {
+    ms = 1U;
+  }
+  if (ms > STALL_RESTART_MAX_MS)
+  {
+    ms = STALL_RESTART_MAX_MS;
+  }
+  g_motor_foc_iq_ref = ma_to_lsb(s_iq_ma);
+  g_motor_foc_handover = 1U;
+  g_rest.end = 1U;
+  g_rest.dwell = dwell;
+  s_rest_hand_t = (uint16_t)now;
+  s_rest_foc_edges = 0U;
+  s_rest_hall = MotorHall_ReadRaw();
+  s_rest_t = now;
+  s_rest_period = ms;
+  s_rest_fast = 0U;
+}
+
+static void begin_restart(void)
+{
+  uint32_t now = HAL_GetTick();
+  uint16_t dwell = MotorHall6_LastDwell();
+  uint8_t sync = 0U;
+
+  if (g_rest.try_n < 255U)
+  {
+    g_rest.try_n++;
+  }
+  if (g_rest.end == 1U)
+  {
+    g_rest.back_ms = (uint16_t)((uint16_t)now - s_rest_hand_t);
+  }
+  /* The current loop just gave the shaft back. It is still moving, so
+   * step from the present hall instead of kicking the field around. */
+  if ((g_rest.end == 1U) && (s_rest_foc_edges < STALL_BOUNCE_EDGES) &&
+      ((uint16_t)((uint16_t)now - s_rest_hand_t) < STALL_BOUNCE_MS) &&
+      (dwell >= 40U) && (dwell <= HALL6_RESUME_TICKS))
+  {
+    sync = 1U;
+    if (g_rest.sync_n < 255U)
+    {
+      g_rest.sync_n++;
+    }
+  }
+  s_rest_fast = 1U;
+  s_rest_t = now;
+  s_rest_prog_hall = MotorHall_ReadRaw();
+  g_rest.end = 0U;
+  if (sync != 0U)
+  {
+    resume_hall6();
+  }
+  else
+  {
+    start_hall6(0U);
+  }
 }
 
 static void do_stop(void)
@@ -305,6 +490,10 @@ void TnbMotor_RequestRun(void)
   if ((s_state == TNB_MOT_ST_IDLE) || (s_state == TNB_MOT_ST_FAULT))
   {
     s_fault = 0U;
+    s_rest_hall = 0xFFU;
+    s_rest_t = HAL_GetTick();
+    s_rest_period = 0U;
+    s_rest_fast = 0U;
     start_hall6(1U);
   }
 }
@@ -317,10 +506,6 @@ void TnbMotor_PollIsr(void)
   if (MotorPwm_IsLatched() != 0U)
   {
     s_fault |= TNB_MOT_FLT_PWM;
-    if ((BOARD_NFAULT_PORT->IDR & BOARD_NFAULT_PIN) != 0U)
-    {
-      MotorPwm_MoeEnable();
-    }
   }
   else
   {
@@ -385,6 +570,50 @@ void TnbMotor_PollIsr(void)
 
   if ((s_state == TNB_MOT_ST_TORQUE) || (s_state == TNB_MOT_ST_SPEED))
   {
+    uint8_t hall = MotorHall_ReadRaw();
+    uint32_t now = HAL_GetTick();
+
+    if (s_rest_hall == 0xFFU)
+    {
+      s_rest_hall = hall;
+      s_rest_t = now;
+    }
+    else if (hall != s_rest_hall)
+    {
+      uint32_t dt = now - s_rest_t;
+
+      /* A late edge is still rotation. Under the reluctance load a
+       * sector is often slower than the fast-spin stop time. */
+      if (dt > STALL_RESTART_MAX_MS)
+      {
+        dt = STALL_RESTART_MAX_MS;
+      }
+      s_rest_period = dt;
+      s_rest_hall = hall;
+      s_rest_t = now;
+      if ((g_rest.end == 1U) && (s_rest_foc_edges < 255U))
+      {
+        s_rest_foc_edges++;
+      }
+    }
+    else
+    {
+      uint32_t limit = STALL_RESTART_MS;
+
+      if ((s_rest_period * 3U) > limit)
+      {
+        limit = s_rest_period * 3U;
+      }
+      if (limit > STALL_RESTART_MAX_MS)
+      {
+        limit = STALL_RESTART_MAX_MS;
+      }
+      if ((now - s_rest_t) >= limit)
+      {
+        begin_restart();
+        return;
+      }
+    }
     apply_refs();
     return;
   }
@@ -394,17 +623,26 @@ void TnbMotor_PollIsr(void)
   }
 
   MotorHall6_GetSnapshot(&snap);
-  if (hall6_spinning(&snap) != 0U)
+  if (MotorHall6_IsForward(s_rest_prog_hall, snap.hall_raw) != 0)
+  {
+    s_rest_prog_hall = snap.hall_raw;
+    s_rest_t = HAL_GetTick();
+  }
+  if (hall6_ready(&snap) != 0U)
   {
     if ((g_motor_angle.valid == 0U) &&
         (g_motor_angle.sector < MOTOR_ANGLE_SECTORS))
     {
       g_motor_angle.valid = 1U;
     }
-    if (g_motor_angle.valid != 0U)
-    {
-      g_motor_foc_handover = 1U;
-    }
+    request_handover();
+  }
+
+  if ((s_rest_fast != 0U) && (g_motor_foc_handover == 0U) &&
+      ((HAL_GetTick() - s_rest_t) >= STALL_ATTEMPT_MS))
+  {
+    end_restart_attempt(2U);
+    return;
   }
 
   if (g_motor_foc_fx.mode == MOTOR_FOC_FX_CURRENT)
@@ -421,8 +659,14 @@ void TnbMotor_PollIsr(void)
     return;
   }
 
-  if (snap.loop_count > HALL6_STALL_TICKS)
+  if ((TNB_HALL6_ONLY == 0) && (g_motor_foc_handover == 0U) &&
+      (snap.loop_count > HALL6_STALL_TICKS))
   {
+    if (s_rest_fast != 0U)
+    {
+      end_restart_attempt(3U);
+      return;
+    }
     s_rev = 0U;
     MotorApp_Stop();
     s_fault |= TNB_MOT_FLT_STALL;
@@ -537,8 +781,6 @@ void TnbMotor_Telemetry(uint16_t *theta_q16, int16_t *w_eps,
                         int16_t *iq_ma, int16_t *id_ma,
                         uint16_t *vbus_mv, uint8_t *hall)
 {
-  int32_t vmv;
-
   if (theta_q16 != 0)
   {
     *theta_q16 = g_motor_angle.theta;
@@ -564,16 +806,7 @@ void TnbMotor_Telemetry(uint16_t *theta_q16, int16_t *w_eps,
   }
   if (vbus_mv != 0)
   {
-    vmv = ((int32_t)g_motor_adc_raw[MOTOR_ADC_VBUS] * 4058) >> 10;
-    if (vmv < 0)
-    {
-      vmv = 0;
-    }
-    if (vmv > 65535)
-    {
-      vmv = 65535;
-    }
-    *vbus_mv = (uint16_t)vmv;
+    *vbus_mv = vbus_mv_now();
   }
   if (hall != 0)
   {
@@ -584,6 +817,24 @@ void TnbMotor_Telemetry(uint16_t *theta_q16, int16_t *w_eps,
 void TnbMotor_Task(void)
 {
   static uint8_t rev_seen;
+
+  MotorPwm_PollOcpZero();
+  if (g_motor_pwm_prot.ocp_hold != 0U)
+  {
+    s_fault |= (g_motor_pwm_prot.ocp_kind == 2U) ? TNB_MOT_FLT_HWOC
+                                                 : TNB_MOT_FLT_SWOC;
+    if ((s_state != TNB_MOT_ST_IDLE) && (s_state != TNB_MOT_ST_FAULT))
+    {
+      do_stop();
+    }
+    s_state = TNB_MOT_ST_FAULT;
+    return;
+  }
+
+  /* Supervisor used to run inside the I2C interrupt, ahead of the
+   * motor tick. Keep it on the main loop so its divides cannot
+   * stretch a 50 us tick. */
+  TnbMotor_PollIsr();
 
   if (s_rev == REV_HALL6)
   {
@@ -675,10 +926,10 @@ void TnbMotor_Task(void)
     motor_hall6_snapshot_t snap;
 
     MotorHall6_GetSnapshot(&snap);
-    if ((hall6_spinning(&snap) != 0U) && (g_motor_angle.valid != 0U))
+    if ((hall6_ready(&snap) != 0U) && (g_motor_angle.valid != 0U) &&
+        (TNB_HALL6_ONLY == 0))
     {
-      g_motor_foc_iq_ref = ma_to_lsb(s_iq_ma);
-      g_motor_foc_handover = 1U;
+      request_handover();
       if (g_motor_foc_fx.mode != MOTOR_FOC_FX_CURRENT)
       {
         UartLog_Puts("交接电流环");
@@ -690,7 +941,16 @@ void TnbMotor_Task(void)
       enter_run();
       return;
     }
+#if TNB_HALL6_ONLY
+    if (snap.hall_changes != s_h6_edges)
+    {
+      s_h6_edges = snap.hall_changes;
+      s_h6_edge_t = HAL_GetTick();
+    }
+    if ((HAL_GetTick() - s_h6_edge_t) > HALL6_ONLY_EDGE_MS)
+#else
     if ((HAL_GetTick() - s_t0) > START_TIMEOUT_MS)
+#endif
     {
       do_stop();
       s_fault |= TNB_MOT_FLT_STALL;

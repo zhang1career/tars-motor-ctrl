@@ -8,7 +8,7 @@
  * two current PIs, inverse Park, SVPWM) but integer throughout so it fits the
  * 20 kHz control ISR. Spec: docs/tasks/fixed-point-foc.md.
  *
- * Currents stay in ADC LSB (1.617 mA). Voltages stay in uV until inverse Park,
+ * Currents stay in ADC LSB (16.17 mA). Voltages stay in uV until inverse Park,
  * then VU = 1024 uV. sin/cos are Q15. No soft-float in MotorFocFx_Step.
  */
 
@@ -60,9 +60,9 @@ typedef struct
 
 extern volatile motor_foc_fx_acc_t g_motor_foc_fx_acc;
 
-/* 300 mA / 1.617 mA per LSB. Matches hall6-observe staircase iq. */
+/* 300 mA / 16.17 mA per LSB. Matches hall6-observe staircase iq. */
 #ifndef MOTOR_FOC_IQ_LSB
-#define MOTOR_FOC_IQ_LSB 186
+#define MOTOR_FOC_IQ_LSB 19
 #endif
 #ifndef MOTOR_FOC_ID_LSB
 #define MOTOR_FOC_ID_LSB MOTOR_FOC_IQ_LSB
@@ -87,6 +87,8 @@ extern volatile uint8_t g_motor_foc_leg3;
 extern volatile uint8_t g_motor_foc_interp;
 /* 1 = id PI on. Handover sets 1. */
 extern volatile uint8_t g_motor_foc_id_on;
+/* 1 = q-axis voltage and integrator may reach -1.2 V. Default 0, floor is 0. */
+extern volatile uint8_t g_motor_foc_vq_neg;
 /* Host may write while CURRENT is running. ISR clamps to
  * ±MOTOR_FOC_IQ_LSB. Handover leaves 0 (id PI holds zero). Negative
  * is field weakening. Do not add this to g_motor_foc_fx — mode is
@@ -123,6 +125,10 @@ extern volatile int32_t g_motor_foc_w_meas_eps;
  * (span ≤ Vdc). Linear 6.58 V already holds 174 @ 175; this is
  * only past that. Hexagon sat rewinds Ki to the delivered vd/vq. */
 extern volatile uint8_t g_motor_foc_overmod;
+/* 1 = compute the two observe-only Parks and add their six sums.
+ * 0 in CURRENT skips those Parks and, when n==0, clears the six.
+ * Init, Handover, and Step do not write this. Default 1. */
+extern volatile uint8_t g_motor_foc_obs;
 
 void MotorFocFx_Init(void);
 void MotorFocFx_SetMode(uint8_t mode);

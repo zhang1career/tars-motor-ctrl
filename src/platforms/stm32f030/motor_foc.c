@@ -16,13 +16,10 @@ volatile motor_foc_snapshot_t g_motor_foc;
 #define FOC_KP (FOC_WC * MOTOR_FOC_LD)
 #define FOC_KI_TS (FOC_WC * MOTOR_FOC_RS * FOC_TS)
 
-/* 1.617 mA per LSB, from the INA240A2 gain of 50 across a 10 mOhm shunt with
+/* 16.17 mA per LSB, from the INA240A2 gain of 50 across a 1 mOhm shunt with
  * VDDA as the ADC reference (measured, roadmap 1.2.1). The shunt reads positive
  * for current leaving the phase, so phase current is the negative of it. */
-#define LSB_TO_AMPS (-1.617e-3f)
-
-/* R30 39k / R31 10k divider, VDDA reference. */
-#define VBUS_LSB_TO_V (3.3124f / 4095.0f * 4.9f)
+#define LSB_TO_AMPS (-16.17e-3f)
 
 /*
  * motor_angle publishes speed as angle counts per tick times 256, signed by
@@ -226,7 +223,7 @@ void MotorFoc_Step(void)
   id = i_al * ct + i_be * sn;
   iq = -i_al * sn + i_be * ct;
 
-  vdc = (float)g_motor_adc_raw[MOTOR_ADC_VBUS] * VBUS_LSB_TO_V;
+  vdc = (float)MotorAdc_VbusMv() * 0.001f;
   if (vdc < 1.0f)
   {
     vdc = 1.0f;

@@ -2,11 +2,17 @@
 #include "motor_tick.h"
 #include "motor_pwm.h"
 #include "tnb_i2c.h"
+#include "reset_diag.h"
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
 #include "motor_adc.h"
 #endif
 
-void NMI_Handler(void)
+_Static_assert(RESET_DIAG_FAULT == 2, "fault word");
+_Static_assert(RESET_DIAG_FAULT_PC == 3, "fault_pc word");
+
+/* CSS clear stays in C. The naked entry has already stored the stacked PC. */
+__attribute__((used, noinline, noreturn))
+static void nmi_rest(void)
 {
   /* HSE Clock Security: SYSCLK has already fallen back to HSI. */
   if (__HAL_RCC_GET_IT(RCC_IT_CSS) != RESET)
@@ -19,12 +25,31 @@ void NMI_Handler(void)
   }
 }
 
-void HardFault_Handler(void)
+__attribute__((naked)) void NMI_Handler(void)
 {
-  MotorPwm_HardwareSafe();
-  for (;;)
-  {
-  }
+  __asm volatile(
+      "mrs r0, msp\n"
+      "ldr r0, [r0, #24]\n"
+      "ldr r1, =g_reset_diag\n"
+      "movs r2, #2\n"
+      "str r2, [r1, #8]\n"
+      "str r0, [r1, #12]\n"
+      "b nmi_rest\n"
+      ".ltorg\n");
+}
+
+__attribute__((naked)) void HardFault_Handler(void)
+{
+  __asm volatile(
+      "mrs r0, msp\n"
+      "ldr r0, [r0, #24]\n"
+      "ldr r1, =g_reset_diag\n"
+      "movs r2, #1\n"
+      "str r2, [r1, #8]\n"
+      "str r0, [r1, #12]\n"
+      "bl MotorPwm_HardwareSafe\n"
+      "1: b 1b\n"
+      ".ltorg\n");
 }
 void SVC_Handler(void)          { }
 void PendSV_Handler(void)       { }

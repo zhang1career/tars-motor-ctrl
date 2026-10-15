@@ -17,7 +17,7 @@ cmake --build "$BUILD"
 
 flash_elf
 
-openocd -f "$CFG" >/tmp/motor_foc_bench_ocd.log 2>&1 &
+"$HW_PROG" openocd nanodap -- -f "$CFG" >/tmp/motor_foc_bench_ocd.log 2>&1 &
 OCD_PID=$!
 cleanup() { kill "$OCD_PID" 2>/dev/null || true; }
 trap cleanup EXIT

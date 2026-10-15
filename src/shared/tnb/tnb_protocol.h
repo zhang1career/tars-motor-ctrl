@@ -129,6 +129,8 @@ extern "C" {
 #define TNB_MOT_FLT_STALL        (1U << 2)
 #define TNB_MOT_FLT_I2C          (1U << 3)
 #define TNB_MOT_FLT_PWM          (1U << 4)
+#define TNB_MOT_FLT_SWOC         (1U << 5) /* software phase overcurrent */
+#define TNB_MOT_FLT_HWOC         (1U << 6) /* TIM1 BKIN */
 
 #define TNB_REG_SPACE_SIZE       0x100U
 

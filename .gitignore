@@ -18,3 +18,8 @@ sim/.kicad
 
 # Local spice scratch, not the FOC report in docs/report/
 reports/
+
+# Rewritten on each tick bench with this build's flash addresses.
+src/firmware/stm32f030/scripts/_bench_*.s
+src/firmware/stm32f030/scripts/_bench_stub.o
+src/firmware/stm32f030/scripts/_bench_stub.bin

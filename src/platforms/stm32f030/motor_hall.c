@@ -25,9 +25,16 @@ void MotorHall_Init(void)
 
 uint8_t MotorHall_ReadRaw(void)
 {
-  uint8_t ha = (HAL_GPIO_ReadPin(BOARD_HALL_A_PORT, BOARD_HALL_A_PIN) != GPIO_PIN_RESET) ? 1U : 0U;
-  uint8_t hb = (HAL_GPIO_ReadPin(BOARD_HALL_B_PORT, BOARD_HALL_B_PIN) != GPIO_PIN_RESET) ? 1U : 0U;
-  uint8_t hc = (HAL_GPIO_ReadPin(BOARD_HALL_C_PORT, BOARD_HALL_C_PIN) != GPIO_PIN_RESET) ? 1U : 0U;
+  uint32_t idr;
 
-  return (uint8_t)(ha | (hb << 1) | (hc << 2));
+  /* A, B, C are PB3, PB4, PB5, so one IDR read packs the old 3-bit code. */
+  _Static_assert(BOARD_HALL_A_PIN == GPIO_PIN_3, "hall A is not PB3");
+  _Static_assert(BOARD_HALL_B_PIN == GPIO_PIN_4, "hall B is not PB4");
+  _Static_assert(BOARD_HALL_C_PIN == GPIO_PIN_5, "hall C is not PB5");
+  _Static_assert(BOARD_HALL_A_PORT == GPIOB, "hall A port is not GPIOB");
+  _Static_assert(BOARD_HALL_B_PORT == GPIOB, "hall B port is not GPIOB");
+  _Static_assert(BOARD_HALL_C_PORT == GPIOB, "hall C port is not GPIOB");
+
+  idr = GPIOB->IDR;
+  return (uint8_t)((idr >> 3) & 7U);
 }
