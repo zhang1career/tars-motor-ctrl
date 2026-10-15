@@ -33,7 +33,8 @@ static const uint16_t s_rcp9[256] = {
     16513, 16480, 16448, 16416,
 };
 
-static uint32_t fx_clz(uint32_t x)
+static inline uint32_t fx_clz(uint32_t x) __attribute__((always_inline));
+static inline uint32_t fx_clz(uint32_t x)
 {
   uint32_t n = 0U;
 
@@ -81,39 +82,53 @@ static uint32_t fx_mulhi(uint32_t a, uint32_t b)
   return p11 + (p01 >> 16) + (p10 >> 16) + (mid >> 16);
 }
 
+/* Shared by Fx_DivU and Fx_QuotU. d != 0. Returns 1 when d is a power
+ * of two and leaves *shift as the count of leading zeros. Otherwise
+ * writes the 9-bit reciprocal into *recip. */
+static inline int fx_recip_u(uint32_t d, uint32_t *shift, uint32_t *recip)
+    __attribute__((always_inline));
+static inline int fx_recip_u(uint32_t d, uint32_t *shift, uint32_t *recip)
+{
+  uint32_t dn;
+  uint32_t idx;
+  uint32_t full;
+  int32_t k;
+
+  *shift = fx_clz(d);
+  if ((d & (d - 1U)) == 0U)
+  {
+    return 1;
+  }
+  dn = d << *shift;
+  idx = dn >> 23;
+  full = ((uint32_t)s_rcp9[idx - 256U]) << 9;
+  k = (int32_t)(*shift) - 23;
+  if (k >= 0)
+  {
+    *recip = full << (uint32_t)k;
+  }
+  else
+  {
+    *recip = full >> (uint32_t)(-k);
+  }
+  return 0;
+}
+
 uint32_t Fx_DivU(uint32_t n, uint32_t d, uint32_t steps) __attribute__((noinline));
 uint32_t Fx_DivU(uint32_t n, uint32_t d, uint32_t steps)
 {
   uint32_t shift;
-  uint32_t dn;
-  uint32_t idx;
-  uint32_t full;
   uint32_t recip;
   uint32_t q;
   uint32_t i;
-  int32_t k;
 
   if (d == 0U)
   {
     return 0U;
   }
-  shift = fx_clz(d);
-  if ((d & (d - 1U)) == 0U)
+  if (fx_recip_u(d, &shift, &recip) != 0)
   {
     return n >> (31U - shift);
-  }
-
-  dn = d << shift;
-  idx = dn >> 23;
-  full = ((uint32_t)s_rcp9[idx - 256U]) << 9;
-  k = (int32_t)shift - 23;
-  if (k >= 0)
-  {
-    recip = full << (uint32_t)k;
-  }
-  else
-  {
-    recip = full >> (uint32_t)(-k);
   }
 
   for (i = 0U; i < steps; i++)
@@ -166,6 +181,96 @@ int32_t Fx_DivS(int32_t n, int32_t d, uint32_t steps)
     ud = (uint32_t)d;
   }
   q = Fx_DivU(un, ud, steps);
+  if (neg != 0U)
+  {
+    return -(int32_t)q;
+  }
+  return (int32_t)q;
+}
+
+uint32_t Fx_QuotU(uint32_t n, uint32_t d) __attribute__((noinline));
+uint32_t Fx_QuotU(uint32_t n, uint32_t d)
+{
+  uint32_t shift;
+  uint32_t recip;
+  uint32_t q;
+  uint32_t a0;
+  uint32_t a1;
+  uint32_t b0;
+  uint32_t b1;
+  uint32_t p00;
+  uint32_t p01;
+  uint32_t p10;
+  uint32_t p11;
+  uint32_t mid;
+
+  if (d == 0U)
+  {
+    return 0U;
+  }
+  if (fx_recip_u(d, &shift, &recip) != 0)
+  {
+    return n >> (31U - shift);
+  }
+
+  a0 = n & 0xFFFFU;
+  a1 = n >> 16;
+  b0 = recip & 0xFFFFU;
+  b1 = recip >> 16;
+  p00 = a0 * b0;
+  p01 = a0 * b1;
+  p10 = a1 * b0;
+  p11 = a1 * b1;
+  mid = (p00 >> 16) + (p01 & 0xFFFFU) + (p10 & 0xFFFFU);
+  q = p11 + (p01 >> 16) + (p10 >> 16) + (mid >> 16);
+
+  /* One-count bias only. The 9-bit table can still miss by about 0.4%
+   * of the quotient, so this is exact only while the quotient is a few
+   * hundred or less. (q + 1) * d wraps in uint32 when both factors are
+   * near 2^16 and the reciprocal overshoots. The angle estimator clamps
+   * that result to 0xFFFF. */
+  if (((q + 1U) * d) <= n)
+  {
+    q++;
+  }
+  if ((q * d) > n)
+  {
+    q--;
+  }
+  return q;
+}
+
+int32_t Fx_QuotS(int32_t n, int32_t d) __attribute__((noinline));
+int32_t Fx_QuotS(int32_t n, int32_t d)
+{
+  uint32_t neg = 0U;
+  uint32_t un;
+  uint32_t ud;
+  uint32_t q;
+
+  if (d == 0)
+  {
+    return 0;
+  }
+  if (n < 0)
+  {
+    neg ^= 1U;
+    un = (uint32_t)(-n);
+  }
+  else
+  {
+    un = (uint32_t)n;
+  }
+  if (d < 0)
+  {
+    neg ^= 1U;
+    ud = (uint32_t)(-d);
+  }
+  else
+  {
+    ud = (uint32_t)d;
+  }
+  q = Fx_QuotU(un, ud);
   if (neg != 0U)
   {
     return -(int32_t)q;

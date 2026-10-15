@@ -35,7 +35,7 @@ MODE_NAMES = {0: "idle", 1: "oneshot", 2: "wrap"}
 SOURCES = {
     0: ("none", ["ch0", "ch1", "ch2", "ch3"]),
     1: ("hall6", ["hall_raw", "step", "ticks_since_edge", "kick"]),
-    2: ("foc", ["id_lsb", "iq_lsb", "theta_q15", "hall_raw"]),
+    2: ("foc", ["id_lsb", "iq_lsb", "theta_q15", "id_iq_cmd"]),
     3: ("adc", ["iu_lsb", "iv_lsb", "iw_lsb", "vbus_raw"]),
     4: ("angle", ["hall_raw", "theta_q15", "ticks_in_sector", "edge_jump"]),
     5: ("foc_ang", ["foc_disc_q15", "foc_ip_q15", "dth_q15", "hall_raw"]),

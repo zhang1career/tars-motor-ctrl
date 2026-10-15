@@ -10,4 +10,10 @@
 uint32_t Fx_DivU(uint32_t n, uint32_t d, uint32_t steps);
 int32_t Fx_DivS(int32_t n, int32_t d, uint32_t steps);
 
+/* 9-bit reciprocal, one multiply, no Newton. The ±1 step removes a
+ * one-count bias. The table can still miss by about 0.4% of the
+ * quotient, so this is not an exact division. */
+uint32_t Fx_QuotU(uint32_t n, uint32_t d);
+int32_t Fx_QuotS(int32_t n, int32_t d);
+
 #endif

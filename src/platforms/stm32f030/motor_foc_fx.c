@@ -100,9 +100,22 @@ static struct {
   int32_t id_int_uv;
   int32_t iq_int_uv;
   int32_t iq_ref_lsb;
-  int32_t w_int_q8;
-  int32_t w_filt_q8;
-  int32_t iq_slew;
+  /* Same three words. The current tick stores phase currents here.
+   * The speed loop, which is not on that tick, stores its own state.
+   * Turning the speed loop on without moving one of them overwrites
+   * the currents. */
+  union {
+    struct {
+      int32_t w_int_q8;
+      int32_t w_filt_q8;
+      int32_t iq_slew;
+    } spd;
+    struct {
+      int32_t ia;
+      int32_t ib;
+      int32_t ic;
+    } ph;
+  } u;
   uint16_t park_theta;
   uint16_t last_stair;
   uint8_t park_have;
@@ -121,9 +134,12 @@ static struct {
 #define s_park_have s_fx.park_have
 #define s_interp_was s_fx.interp_was
 #define s_slew_locked s_fx.slew_locked
-#define s_w_int_q8 s_fx.w_int_q8
-#define s_w_filt_q8 s_fx.w_filt_q8
-#define s_iq_slew s_fx.iq_slew
+#define s_w_int_q8 s_fx.u.spd.w_int_q8
+#define s_w_filt_q8 s_fx.u.spd.w_filt_q8
+#define s_iq_slew s_fx.u.spd.iq_slew
+#define s_ph_ia s_fx.u.ph.ia
+#define s_ph_ib s_fx.u.ph.ib
+#define s_ph_ic s_fx.u.ph.ic
 #define s_spd_was s_fx.spd_was
 #define s_iq_slew_div s_fx.iq_slew_div
 #define s_w_ki_div s_fx.w_ki_div
@@ -360,6 +376,10 @@ static inline int32_t fx_vq_max_uv(void)
   return m;
 }
 
+/* Speed PI is not on the signed-off current tick. Compiled out so it
+ * cannot rot into the tick. The three words it used are the phase
+ * currents on that tick. */
+#if 0
 /* noinline: handover leaves this off. Inlining it into Step forces the
  * current tick to keep the speed-loop locals in the same register file. */
 static int32_t fx_speed_pi(void) __attribute__((noinline, unused));
@@ -447,6 +467,7 @@ static int32_t fx_speed_pi(void)
   }
   return s_iq_slew;
 }
+#endif
 
 static inline int32_t fx_vd_max_uv(void)
 {
@@ -472,6 +493,7 @@ static inline int32_t fx_vq_lo_uv(void)
   return 0;
 }
 
+#if 0
 /* Hexagon sat: recover the vd/vq that actually went out and rewind
  * both current-loop integrators (I := v_sat − Kp·e). Linear mode
  * already clamps Ki to vq_hi/vd_hi, which matches the circle when
@@ -502,6 +524,7 @@ static void fx_rewind_hexagon(int32_t va, int32_t vb, int32_t vc,
   }
   s_iq_int_uv = fx_clamp(*vq_uv - FX_KP_UV_PER_LSB * eq, fx_vq_lo_uv(), vq_hi);
 }
+#endif
 
 #pragma GCC push_options
 #pragma GCC optimize ("O2")
@@ -521,9 +544,10 @@ static const uint32_t s_span_inv_q16[96] = {
     728, 720, 712, 704, 697, 689
 };
 
+#if 0
 /* Same quotient as num/span for span in 1..95. noinline: at -O2 the
  * compiler otherwise folds this back into __divsi3, which is the cost
- * we are removing. */
+ * we are removing. The live floor uses fx_span_q. */
 static int32_t fx_div_span(int32_t num, int32_t span) __attribute__((noinline, unused));
 static int32_t fx_div_span(int32_t num, int32_t span)
 {
@@ -558,7 +582,9 @@ static int32_t fx_div_span(int32_t num, int32_t span)
   }
   return (int32_t)q;
 }
+#endif
 
+#if 0
 /* noinline: the unsaturated tick must not carry this loop. */
 static uint32_t isqrt32(uint32_t x) __attribute__((noinline, unused));
 static uint32_t isqrt32(uint32_t x)
@@ -585,9 +611,11 @@ static uint32_t isqrt32(uint32_t x)
   }
   return r;
 }
+#endif
 
 #pragma GCC pop_options
 
+#if 0
 /* Observe Parks do not feed the PIs. Kept out of Step so the current
  * tick does not allocate their angles and products. */
 static void fx_observe_parks(int32_t i_al, int32_t i_be,
@@ -611,7 +639,9 @@ static void fx_observe_parks(int32_t i_al, int32_t i_be,
   *id_ip = ( i_al * ct_ip + i_be * sn_ip) >> 15;
   *iq_ip = (-i_al * sn_ip + i_be * ct_ip) >> 15;
 }
+#endif
 
+#if 0
 /* Returned by value. Taking the address of Step's phase voltages would
  * pin them to the stack on the tick that does not overmodulate. */
 typedef struct
@@ -683,6 +713,7 @@ static fx_over_t fx_overmod_apply(int32_t va, int32_t vb, int32_t vc,
   }
   return o;
 }
+#endif
 
 /* The 20 kHz tick is one configuration: handover's current loop.
  * ARR and the 24 V bus are compile-time constants, so the CCR scale
@@ -695,8 +726,8 @@ static fx_over_t fx_overmod_apply(int32_t va, int32_t vb, int32_t vc,
  * modulator reloads the snapshot and recomputes sin and the phase
  * currents for dead-time. That costs a few dozen cycles and no RAM.
  *
- * Observe, speed, overmodulation, and Hi-Z stay in this file and are
- * not called. A second copy of the same math does not fit in 32 KB,
+ * Observe, speed, and overmodulation are compiled out above. A second
+ * copy of the same math does not fit in 32 KB,
  * and it is not the signed-off current law. */
 #define FX_TICK_ARR ((int32_t)((MOTOR_PWM_TIM_CLK / (2U * MOTOR_PWM_HZ)) - 1U))
 #define FX_TICK_K   ((int32_t)((FX_TICK_ARR * 33554) / (int32_t)MOTOR_VBUS_FIXED_MV))
@@ -811,11 +842,11 @@ static void fx_tick_pi(void)
   i_be = ((ia + (ib << 1)) * FX_INV_SQRT3_Q15) >> 15;
   id = ((i_al * ct) + (i_be * sn)) >> 15;
   iq = ((-i_al * sn) + (i_be * ct)) >> 15;
-  /* Dead-time reads these. The speed loop is not on this tick, and
-   * there is no spare RAM for another three words. */
-  s_w_int_q8 = ia;
-  s_w_filt_q8 = ib;
-  s_iq_slew = ic;
+  /* Dead-time reads these. Same storage as the speed-loop state;
+   * that loop is not on this tick. */
+  s_ph_ia = ia;
+  s_ph_ib = ib;
+  s_ph_ic = ic;
   g_motor_foc_fx.id_lsb = id;
   g_motor_foc_fx.iq_lsb = iq;
 
@@ -1011,9 +1042,9 @@ static void fx_tick_pwm(void)
     int32_t dv;
     int32_t dw;
 
-    ia = s_w_int_q8;
-    ib = s_w_filt_q8;
-    ic = s_iq_slew;
+    ia = s_ph_ia;
+    ib = s_ph_ib;
+    ic = s_ph_ic;
     du = (ia > FX_TICK_DT_BAND) ? FX_TICK_HALF_DT :
          ((ia < -FX_TICK_DT_BAND) ? -FX_TICK_HALF_DT :
           (ia * (FX_TICK_HALF_DT / FX_TICK_DT_BAND)));

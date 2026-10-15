@@ -74,15 +74,16 @@ static void motor_tick_trace(void)
 #if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
   if (g_motor_trace.source == MOTOR_TRACE_SRC_FOC)
   {
-    int16_t hall = 0;
+    /* Low 8 bits: signed d-axis command. High 8 bits: signed q-axis
+     * command. The current-loop tick does not refresh hall, so that
+     * column could not mark a step. */
+    int16_t cmd = (int16_t)((g_motor_foc_id_ref & 0xFF) |
+                            ((g_motor_foc_iq_ref & 0xFF) << 8));
 
-#if defined(MOTOR_ANGLE) && (MOTOR_ANGLE != 0)
-    hall = (int16_t)g_motor_angle.hall;
-#endif
     MotorTrace_Push((int16_t)g_motor_foc_fx.id_lsb,
                     (int16_t)g_motor_foc_fx.iq_lsb,
                     (int16_t)(g_motor_foc_fx.theta >> 1),
-                    hall);
+                    cmd);
   }
   if (g_motor_trace.source == MOTOR_TRACE_SRC_FOC_ANG)
   {
@@ -122,6 +123,31 @@ static void motor_tick_trace(void)
                     (int16_t)g_motor_foc_fx.iq_lsb);
   }
 #endif
+}
+
+/* Armed capture only. Most ticks just advance the count; the store
+ * still goes through motor_tick_trace, which matches MotorTrace_Push. */
+static void motor_tick_trace_gate(void) __attribute__((noinline));
+static void motor_tick_trace_gate(void)
+{
+  uint16_t decim = g_motor_trace.decim;
+
+  if (g_motor_trace.mode == MOTOR_TRACE_MODE_IDLE)
+  {
+    return;
+  }
+  if (decim > 1U)
+  {
+    uint16_t n = (uint16_t)(g_motor_trace.decim_count + 1U);
+
+    if (n < decim)
+    {
+      g_motor_trace.decim_count = n;
+      g_motor_trace.pushes++;
+      return;
+    }
+  }
+  motor_tick_trace();
 }
 #endif
 
@@ -165,11 +191,13 @@ static void motor_tick_dispatch(void)
     motor_tick_other();
   }
 
-  /* Whole-tick cycles are recorded in MotorAdc_DmaIrq. */
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+  /* noinline: the decimation count must not enlarge the steady frame.
+   * Source 0 stays a compare in the caller. An armed capture bumps the
+   * count here, and calls the trace function only on the tick that stores. */
   if (g_motor_trace.source != 0U)
   {
-    motor_tick_trace();
+    motor_tick_trace_gate();
   }
 #endif
 
