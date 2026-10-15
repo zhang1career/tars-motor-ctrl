@@ -21,6 +21,14 @@ void MotorHall6_Init(void);
 int  MotorHall6_Enable(int enable);
 int  MotorHall6_IsEnabled(void);
 
+/* 1 when `now` is the next code in the active commutation sequence. */
+int MotorHall6_IsForward(uint8_t prev, uint8_t now);
+
+/* Commutate the current hall with no open-loop kick. Keeps the edge
+ * count from the attempt already under way, and clears the last sector
+ * time so handover has to see a new one. */
+int MotorHall6_ResumeSync(void);
+
 /* Stop writing the bridges but leave TIM1 and the control tick running so
  * FOC can take over. Enable(0) also stops the tick and clears MOE. */
 void MotorHall6_ReleasePwm(void);
@@ -47,6 +55,13 @@ uint16_t MotorHall6_FocTheta(void);
  * already done). Do not read the halls again in here. Division is on
  * the edge only. */
 uint16_t MotorHall6_FocThetaInterp(uint16_t now);
+
+/* Ticks of the sector just completed, at 20 kHz. 0 if none since enable. */
+uint16_t MotorHall6_LastDwell(void);
+
+/* Drop a frozen stall count and continue at the six-step sector time.
+ * Called once from handover, not from the steady tick. */
+void MotorHall6_FocArm(uint16_t dwell_ticks);
 
 /* Signed Q16 counts per tick, ×256. One electrical turn of
  * Σ(calibrated sector width)/Σ(ticks + 1), not the interpolator's

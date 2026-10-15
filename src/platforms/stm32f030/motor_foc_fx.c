@@ -256,6 +256,7 @@ void MotorFocFx_Handover(void)
     /* Park/iPark uses hall6's voltage axis, so +iq reinforces whatever
      * direction hall6 was already commutating. Host sign is ignored. */
     MotorHall6_ReleasePwm();
+    MotorHall6_FocArm(MotorHall6_LastDwell());
     MotorFocFx_SetIqRefLsb((int32_t)MOTOR_FOC_IQ_LSB);
     MotorFocFx_SetMode(MOTOR_FOC_FX_CURRENT);
     s_iq_int_uv = 1200000;
