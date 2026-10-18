@@ -70,9 +70,9 @@ extern volatile motor_foc_fx_acc_t g_motor_foc_fx_acc;
 
 /* Host writes 1 after the rotor is spinning: ISR releases hall6 and
  * enters the accepted CURRENT baseline (DPWMMIN, id on, DT on,
- * FocThetaInterp, |vd| 2.4 V, vq 2.4 V). 3.6 V after interp is locked
- * is OK (2026-08-28); the old BKIN was Park sitting at −60°. Write 2
- * to freeze PWM; motor_off then clears MOE. */
+ * FocThetaInterp). q 1.6 V and |vd| 1.2 V are the temporary
+ * mitigation in VQMAX_LINEAR_UV. Write 2 to freeze PWM; motor_off
+ * then clears MOE. */
 extern volatile uint8_t g_motor_foc_handover;
 /* Host may write while CURRENT is running. ISR clamps to 0..MOTOR_FOC_IQ_LSB
  * each tick (sign ignored). */
@@ -94,11 +94,13 @@ extern volatile uint8_t g_motor_foc_vq_neg;
  * is field weakening. Do not add this to g_motor_foc_fx — mode is
  * at byte +32 and the handover poll uses that offset. */
 extern volatile int32_t g_motor_foc_id_ref;
-/* vq ceiling in µV. Handover 2.4e6. ISR clamps 1.2e6..10e6.
- * 12 V linear is 6.58e6; 15 V linear is Vdc/√3 ≈ 8.66e6.
+/* vq ceiling in µV. Temporary mitigation 1.6e6 (2026-10-18).
+ * ISR clamps 1.2e6..10e6. Restoring the 6.58e6 linear-region value
+ * is the TODO on VQMAX_LINEAR_UV. 15 V linear is Vdc/√3 ≈ 8.66e6.
  * Six-step is ~2 Vdc/π and needs g_motor_foc_overmod=1. */
 extern volatile int32_t g_motor_foc_vq_max_uv;
-/* |vd| ceiling in µV. Handover 2.4e6. ISR clamps 1.2e6..2.4e6. */
+/* |vd| ceiling in µV. Temporary mitigation 1.2e6, also the ISR
+ * floor. The previous handover value was 2.4e6. */
 extern volatile int32_t g_motor_foc_vd_max_uv;
 /* Park rate limit, Q16 per tick. Default 600 = 3.30 deg/tick = 183
  * elec/s at 20 kHz (clears empty-load 5.0 V / 121 elec/s). 300 was

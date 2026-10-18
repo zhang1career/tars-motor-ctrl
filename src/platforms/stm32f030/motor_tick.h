@@ -12,7 +12,7 @@ extern volatile uint16_t g_tick_pad;
  * 0 Clarke and the Park that feeds the PIs
  * 1 the two observe-only Parks
  * 2 PIs, voltage limit, inverse Park, SVPWM, CCR
- * 3 8% floor, running sums, duty write */
+ * 3 duty write */
 extern volatile uint16_t g_tick_part_max[4];
 
 uint32_t MotorTick_Mark(void);

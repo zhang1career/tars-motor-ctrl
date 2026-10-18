@@ -798,6 +798,19 @@ void MotorHall6_FocArm(uint16_t dwell_ticks)
     s_ft.step = step;
     s_ft.omega_q8 = om;
     s_ft.have_omega = 1U;
+    /* Six-step has already spent part of this sector. A walk that
+     * starts at the boundary sits that far behind the rotor until the
+     * next hall, and the d-axis integrator rails. Seed the elapsed
+     * ticks so the first current tick is at the present angle. */
+    {
+      uint16_t elapsed = s_ticks_since_edge;
+
+      if (elapsed > dwell_ticks)
+      {
+        elapsed = dwell_ticks;
+      }
+      s_ft.ticks = elapsed;
+    }
     lim = (uint32_t)dwell_ticks << 1;
     if (lim < HALL6_STALL_TICKS)
     {

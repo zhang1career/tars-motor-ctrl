@@ -41,6 +41,7 @@ SOURCES = {
     5: ("foc_ang", ["foc_disc_q15", "foc_ip_q15", "dth_q15", "hall_raw"]),
     6: ("foc_v", ["vd_mv", "vq_mv", "sat", "iq_lsb"]),
     7: ("vsweep", ["tag", "iu_lsb", "iv_lsb", "iw_lsb"]),
+    8: ("foc_dqv", ["idq", "vd_u", "vq_u", "theta_q15"]),
 }
 
 DEG_PER_Q15 = 360.0 / 32768.0   # theta is stored as theta_q16 >> 1
@@ -278,9 +279,23 @@ def main() -> int:
     if args.csv:
         csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", encoding="utf-8") as f:
-        f.write("t_us," + ",".join(labels) + "\n")
-        for i, row in enumerate(rows):
-            f.write(f"{i * dt_us:.1f}," + ",".join(str(v) for v in row) + "\n")
+        if hdr["source"] == 8:
+            f.write("t_us,id_lsb,iq_lsb,vd_mv,vq_mv,theta_q15\n")
+            for i, row in enumerate(rows):
+                packed = row[0] & 0xFFFF
+                id_b = packed & 0xFF
+                iq_b = (packed >> 8) & 0xFF
+                if id_b >= 128:
+                    id_b -= 256
+                if iq_b >= 128:
+                    iq_b -= 256
+                vd_mv = int(round(row[1] * 1.024))
+                vq_mv = int(round(row[2] * 1.024))
+                f.write(f"{i * dt_us:.1f},{id_b},{iq_b},{vd_mv},{vq_mv},{row[3]}\n")
+        else:
+            f.write("t_us," + ",".join(labels) + "\n")
+            for i, row in enumerate(rows):
+                f.write(f"{i * dt_us:.1f}," + ",".join(str(v) for v in row) + "\n")
     print(f"csv        {csv_path}")
 
     if hdr["source"] == 1:

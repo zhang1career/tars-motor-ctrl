@@ -41,7 +41,8 @@ enum
   MOTOR_TRACE_SRC_ANGLE = 4U, /* hall_raw, theta_q15, ticks_in_sector, edge_jump */
   MOTOR_TRACE_SRC_FOC_ANG = 5U, /* foc_q15, interp_q15, dth_q15, hall_raw */
   MOTOR_TRACE_SRC_FOC_V = 6U,  /* vd_mv, vq_mv, sat, iq_lsb */
-  MOTOR_TRACE_SRC_VSWEEP = 7U  /* tag, iu_lsb, iv_lsb, iw_lsb; see motor_vsweep.h */
+  MOTOR_TRACE_SRC_VSWEEP = 7U, /* tag, iu_lsb, iv_lsb, iw_lsb; see motor_vsweep.h */
+  MOTOR_TRACE_SRC_FOC_DQV = 8U /* id|iq int8 packed, vd uV>>10, vq uV>>10, theta_q15 */
 };
 
 typedef struct

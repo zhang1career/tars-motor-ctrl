@@ -85,6 +85,7 @@ set(TNB_BOARD_ID "16" CACHE STRING "TNB board id; FULL address = 0x40 + id (16 â
 set(MOTOR_FOC_IQ_LSB "99" CACHE STRING "FOC |iq| clamp in ADC LSB (99 = 1.6 A at 16.17 mA/LSB, 1 mOhm shunt)")
 option(TNB_HALL6_ONLY "I2C start runs hall6 only, never the current loop" OFF)
 option(UART_LOG "PA14 USART1 log after boot (off keeps SWCLK for a live capture)" ON)
+option(BOOST_BRINGUP "Boot the boost regulator and do not start the motor" OFF)
 set(MOTOR_FOC_ID_LSB "" CACHE STRING "FOC |id| clamp in ADC LSB (default = MOTOR_FOC_IQ_LSB)")
 set(MOTOR_HALL6_KICK_DUTY "" CACHE STRING "Hall6 kick duty percent (default 6)")
 set(MOTOR_HALL6_RUN_DUTY "" CACHE STRING "Hall6 run duty percent (default 7)")
@@ -164,6 +165,9 @@ endif()
 if(NOT UART_LOG)
   add_compile_definitions(UART_LOG_ENABLE=0)
 endif()
+if(BOOST_BRINGUP)
+  add_compile_definitions(BOOST_BRINGUP=1)
+endif()
 if(MOTOR_VBUS_SENSE)
   add_compile_definitions(MOTOR_VBUS_SENSE=1)
 else()
@@ -189,6 +193,9 @@ endforeach()
 endforeach()
 
 set(PLAT_DIR ${CMAKE_SOURCE_DIR}/../../platforms/stm32f030)
+# The motor image is full. Size-optimize only the boost file; the current
+# loop stays on the Release -Os already applied to every other unit.
+set_source_files_properties(${PLAT_DIR}/boost.c PROPERTIES COMPILE_OPTIONS "-Oz")
 set(TNB_DIR  ${CMAKE_SOURCE_DIR}/../../shared/tnb)
 set(FOC_DIR  ${CMAKE_SOURCE_DIR}/../../../sim/codegen_stm32)
 
@@ -233,6 +240,14 @@ if(NOT MOTOR_START_BENCH)
   list(REMOVE_ITEM APP_SRC ${CMAKE_SOURCE_DIR}/App/ctrl_bench.c)
 endif()
 
+if(BOOST_BRINGUP)
+  # The motor image already fills the 32 KB part. This boot leaves it out.
+  set(APP_SRC "")
+  set(PLAT_SRC ${PLAT_DIR}/boost.c)
+  set(FOC_SRC "")
+  set(FOC_LINK_OPTS "")
+endif()
+
 set(HAL_SRC
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal.c
   ${CMAKE_SOURCE_DIR}/Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal_cortex.c
@@ -257,7 +272,7 @@ add_executable(${PROJECT_NAME}.elf
   ${PLAT_SRC}
   ${FOC_SRC}
   ${HAL_SRC}
-  ${TNB_DIR}/tnb_crc.c
+  $<$<NOT:$<BOOL:${BOOST_BRINGUP}>>:${TNB_DIR}/tnb_crc.c>
   ${CMAKE_SOURCE_DIR}/startup_stm32f030x6.s)
 
 target_include_directories(${PROJECT_NAME}.elf PRIVATE
@@ -278,12 +293,12 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
   --specs=nano.specs
   --specs=nosys.specs
   -Wl,--gc-sections
-  -Wl,--undefined=MotorApp_Start
-  -Wl,--undefined=MotorApp_Stop
-  -Wl,--undefined=MotorApp_StartOpenloop6
-  -Wl,--undefined=MotorApp_DiagGPhase
-  -Wl,--undefined=MotorApp_DiagStop
-  -Wl,--undefined=MotorHall6_Enable
+  $<$<NOT:$<BOOL:${BOOST_BRINGUP}>>:-Wl,--undefined=MotorApp_Start>
+  $<$<NOT:$<BOOL:${BOOST_BRINGUP}>>:-Wl,--undefined=MotorApp_Stop>
+  $<$<NOT:$<BOOL:${BOOST_BRINGUP}>>:-Wl,--undefined=MotorApp_StartOpenloop6>
+  $<$<NOT:$<BOOL:${BOOST_BRINGUP}>>:-Wl,--undefined=MotorApp_DiagGPhase>
+  $<$<NOT:$<BOOL:${BOOST_BRINGUP}>>:-Wl,--undefined=MotorApp_DiagStop>
+  $<$<NOT:$<BOOL:${BOOST_BRINGUP}>>:-Wl,--undefined=MotorHall6_Enable>
   ${FOC_LINK_OPTS}
   -Wl,--print-memory-usage
   -Wl,-Map=${PROJECT_NAME}.map)

@@ -19,7 +19,9 @@ static void nmi_rest(void)
   {
     __HAL_RCC_CLEAR_IT(RCC_IT_CSS);
   }
+#if !defined(BOOST_BRINGUP) || (BOOST_BRINGUP == 0)
   MotorPwm_HardwareSafe();
+#endif
   for (;;)
   {
   }
@@ -47,7 +49,9 @@ __attribute__((naked)) void HardFault_Handler(void)
       "movs r2, #1\n"
       "str r2, [r1, #8]\n"
       "str r0, [r1, #12]\n"
+#if !defined(BOOST_BRINGUP) || (BOOST_BRINGUP == 0)
       "bl MotorPwm_HardwareSafe\n"
+#endif
       "1: b 1b\n"
       ".ltorg\n");
 }
@@ -61,11 +65,15 @@ void SysTick_Handler(void)
 
 void TIM1_BRK_UP_TRG_COM_IRQHandler(void)
 {
+#if !defined(BOOST_BRINGUP) || (BOOST_BRINGUP == 0)
   MotorTick_OnTim1Update();
   HAL_TIM_IRQHandler(&htim1);
+#else
+  TIM1->SR = 0U;
+#endif
 }
 
-#if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
+#if defined(MOTOR_ADC) && (MOTOR_ADC != 0) && (!defined(BOOST_BRINGUP) || (BOOST_BRINGUP == 0))
 void DMA1_Channel1_IRQHandler(void)
 {
   MotorAdc_DmaIrq();
@@ -74,5 +82,7 @@ void DMA1_Channel1_IRQHandler(void)
 
 void I2C1_IRQHandler(void)
 {
+#if !defined(BOOST_BRINGUP) || (BOOST_BRINGUP == 0)
   TnbI2c_IRQHandler();
+#endif
 }

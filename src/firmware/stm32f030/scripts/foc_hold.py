@@ -392,7 +392,7 @@ def main() -> int:
     ap.add_argument("--iq", type=int, required=True, help="q 轴指令，毫安")
     ap.add_argument("--w", type=int, default=0, help="速度指令，电周期每秒")
     ap.add_argument("--source", default="foc",
-                    choices=["hall6", "foc", "adc", "angle", "foc_ang", "foc_v"])
+                    choices=["hall6", "foc", "adc", "angle", "foc_ang", "foc_v", "foc_dqv"])
     ap.add_argument("--decim", type=int, default=8)
     ap.add_argument("--csv", type=Path, required=True)
     ap.add_argument("--hall", type=int, help="停稳后必须是这个霍尔，否则不采")

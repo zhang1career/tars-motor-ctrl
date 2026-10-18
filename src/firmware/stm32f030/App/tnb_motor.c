@@ -10,15 +10,21 @@
 #include "motor_pwm.h"
 #include "hall6.h"
 #include "board_pins.h"
+#include "boost.h"
 #include "main.h"
 
 #define MA_PER_LSB_NUM   1617   /* 16.17 mA/LSB, 1 mOhm shunt */
 #define MA_PER_LSB_DEN   100
-#define VQMAX_LINEAR_UV  6580000
+/* Temporary mitigation, 2026-10-18. 10% of 24 V (2.4 V) settles on
+ * the 2.4 A software line, and the 200 mA runs that hold sit near
+ * 1.4 V, so the q ceiling is 1.6 V. |vd| is 1.2 V at handover.
+ * TODO: restore 6580000 and find why the integrator winds to the
+ * rail. 1.6 V is not the current-loop design. */
+#define VQMAX_LINEAR_UV  1600000
 #define START_TIMEOUT_MS 8000U
-/* After the 1.5 us dead time, 15% of 24 V is ~2.9 V average, about the
- * 2.6 V that 25% gave on the 12 V bus. */
-#define HALL6_DUTY_PCT   10U
+/* 10% of 24 V settled at 2.4 A on this winding, which is the software
+ * overcurrent line. 6% keeps the six-step current under that line. */
+#define HALL6_DUTY_PCT   6U
 #define HALL6_READY_EDGES 6U
 #define HALL6_STALL_TICKS 160000U
 #define REV_W_EPS         12
@@ -608,8 +614,10 @@ void TnbMotor_PollIsr(void)
       {
         limit = STALL_RESTART_MAX_MS;
       }
-      if ((now - s_rest_t) >= limit)
-      {
+      if ((s_state == TNB_MOT_ST_TORQUE) && (s_rev == 0U) && (g_motor_foc_iq_ref == 0)) {
+        /* A zero q command holds a stopped rotor. A restart would kick it. */
+        s_rest_t = now;
+      } else if ((now - s_rest_t) >= limit) {
         begin_restart();
         return;
       }
@@ -916,6 +924,11 @@ void TnbMotor_Task(void)
 
   if ((s_run_req != 0U) && (s_state == TNB_MOT_ST_IDLE))
   {
+    /* Leave the request pending until the boost output is in the 32 V window. */
+    if (Boost_Ready() == 0U)
+    {
+      return;
+    }
     s_run_req = 0U;
     start_hall6(1U);
     return;

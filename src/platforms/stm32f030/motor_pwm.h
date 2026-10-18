@@ -21,9 +21,10 @@ extern TIM_HandleTypeDef htim1;
  * The phase currents are needed for dead-time compensation, not for control:
  * during the dead time both switches are off and the phase is pulled to
  * whichever rail its own current freewheels into, so the error is +DT/2 or
- * -DT/2 depending on current sign. That is 36 counts of 1199, about 3% of the
- * bus, i.e. 0.36 V -- and it does NOT cancel as common mode the way a uniform
- * offset would, because each phase's error follows its own current polarity.
+ * -DT/2 depending on current sign. That is 36 CCR counts (72 timer counts),
+ * 0.72 V at 24 V, on a leg that is actually switching. A leg held at CCR 0
+ * is on a rail and has no dead-time error. Each phase follows its own
+ * current, so the error is not a common-mode offset.
  */
 void MotorPwm_SetDuties(float da, float db, float dc, float ia, float ib, float ic);
 
@@ -34,9 +35,10 @@ void MotorPwm_SetDuties(float da, float db, float dc, float ia, float ib, float 
  * The phase currents are needed for dead-time compensation, not for control:
  * during the dead time both switches are off and the phase is pulled to
  * whichever rail its own current freewheels into, so the error is +DT/2 or
- * -DT/2 depending on current sign. That is 36 counts of 1199, about 3% of the
- * bus, i.e. 0.36 V -- and it does NOT cancel as common mode the way a uniform
- * offset would, because each phase's error follows its own current polarity.
+ * -DT/2 depending on current sign. That is 36 CCR counts (72 timer counts),
+ * 0.72 V at 24 V, on a leg that is actually switching. A leg held at CCR 0
+ * is on a rail and has no dead-time error. Each phase follows its own
+ * current, so the error is not a common-mode offset.
  */
 /* All three legs complementary. Dead-time compensation is off unless
  * g_motor_pwm_dt_on is 1 (host, after midrail+id is already spinning). */

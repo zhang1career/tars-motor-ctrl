@@ -124,6 +124,9 @@ static struct {
   uint8_t spd_was;
   uint8_t iq_slew_div;
   uint8_t w_ki_div;
+  /* 1 = skip the current PI and emit id_int_uv / iq_int_uv as vd / vq.
+   * Host measurement only. Normal runs leave this 0. */
+  uint8_t vhold;
 } s_fx;
 
 #define s_id_int_uv s_fx.id_int_uv
@@ -142,6 +145,7 @@ static struct {
 #define s_ph_ic s_fx.u.ph.ic
 #define s_spd_was s_fx.spd_was
 #define s_iq_slew_div s_fx.iq_slew_div
+#define s_vhold s_fx.vhold
 #define s_w_ki_div s_fx.w_ki_div
 
 /* Speed loop. Current-loop Kp/Ki stay at wc=1200 Hz.
@@ -199,7 +203,9 @@ void MotorFocFx_Init(void)
   g_motor_foc_id_on = 0U;
   g_motor_foc_id_ref = 0;
   g_motor_pwm_dt_on = 0U;
-  g_motor_foc_vq_max_uv = 2400000;
+  /* Same temporary ceilings as VQMAX_LINEAR_UV. apply_refs overwrites
+   * vq on every torque tick. */
+  g_motor_foc_vq_max_uv = 1600000;
   g_motor_foc_vd_max_uv = 1200000;
   g_motor_foc_park_slew_q16 = FX_PARK_SLEW_Q16;
   g_motor_foc_park_off_q16 = FX_PARK_OFF_Q16;
@@ -216,6 +222,7 @@ void MotorFocFx_Init(void)
   s_park_have = 0U;
   s_interp_was = 0U;
   s_slew_locked = 0U;
+  s_vhold = 0U;
   MotorFocFx_ResetAcc();
 }
 
@@ -257,20 +264,22 @@ void MotorFocFx_Handover(void)
      * direction hall6 was already commutating. Host sign is ignored. */
     MotorHall6_ReleasePwm();
     MotorHall6_FocArm(MotorHall6_LastDwell());
+    s_vhold = 0U;
     MotorFocFx_SetIqRefLsb((int32_t)MOTOR_FOC_IQ_LSB);
     MotorFocFx_SetMode(MOTOR_FOC_FX_CURRENT);
     s_iq_int_uv = 1200000;
     s_id_int_uv = 0;
     /* Accepted CURRENT baseline: DPWMMIN + id + DT + vq_neg + FocThetaInterp.
-     * Seed vq 2.4 V. Raise the ceiling after interp is locked. */
+     * q 1.6 V and |vd| 1.2 V are a temporary mitigation. apply_refs
+     * writes the same q ceiling. TODO: VQMAX_LINEAR_UV. */
     g_motor_foc_leg3 = 1U;
     g_motor_foc_interp = 1U;
     g_motor_foc_id_on = 1U;
     g_motor_foc_id_ref = 0;
     g_motor_pwm_dt_on = 1U;
     g_motor_foc_vq_neg = 1U;
-    g_motor_foc_vq_max_uv = 2400000;
-    g_motor_foc_vd_max_uv = 2400000;
+    g_motor_foc_vq_max_uv = 1600000;
+    g_motor_foc_vd_max_uv = 1200000;
     g_motor_foc_park_slew_q16 = FX_PARK_SLEW_Q16;
     g_motor_foc_park_off_q16 = FX_PARK_OFF_Q16;
     g_motor_foc_spd_on = 0U;
@@ -304,6 +313,7 @@ void MotorFocFx_SetMode(uint8_t mode)
     s_park_have = 0U;
     s_interp_was = 0U;
     s_slew_locked = 0U;
+    s_vhold = 0U;
     MotorFocFx_ResetAcc();
   }
   g_motor_foc_fx.mode = mode;
@@ -527,64 +537,6 @@ static void fx_rewind_hexagon(int32_t va, int32_t vb, int32_t vc,
 }
 #endif
 
-#pragma GCC push_options
-#pragma GCC optimize ("O2")
-/* 65536/span for span = 1..95. Index 0 is unused. One multiply plus at
- * most one correction equals the truncated division, for the products
- * the 8% floor actually forms (num = d * span_min, |d| <= span). */
-static const uint32_t s_span_inv_q16[96] = {
-    0, 65536, 32768, 21845, 16384, 13107, 10922, 9362, 8192, 7281,
-    6553, 5957, 5461, 5041, 4681, 4369, 4096, 3855, 3640, 3449,
-    3276, 3120, 2978, 2849, 2730, 2621, 2520, 2427, 2340, 2259,
-    2184, 2114, 2048, 1985, 1927, 1872, 1820, 1771, 1724, 1680,
-    1638, 1598, 1560, 1524, 1489, 1456, 1424, 1394, 1365, 1337,
-    1310, 1285, 1260, 1236, 1213, 1191, 1170, 1149, 1129, 1110,
-    1092, 1074, 1057, 1040, 1024, 1008, 992, 978, 963, 949,
-    936, 923, 910, 897, 885, 873, 862, 851, 840, 829,
-    819, 809, 799, 789, 780, 771, 762, 753, 744, 736,
-    728, 720, 712, 704, 697, 689
-};
-
-#if 0
-/* Same quotient as num/span for span in 1..95. noinline: at -O2 the
- * compiler otherwise folds this back into __divsi3, which is the cost
- * we are removing. The live floor uses fx_span_q. */
-static int32_t fx_div_span(int32_t num, int32_t span) __attribute__((noinline, unused));
-static int32_t fx_div_span(int32_t num, int32_t span)
-{
-  int32_t neg = 0;
-  uint32_t mag;
-  uint32_t q;
-  uint32_t s;
-
-  if (span <= 0)
-  {
-    span = 1;
-  }
-  else if (span >= 96)
-  {
-    span = 95;
-  }
-  if (num < 0)
-  {
-    neg = 1;
-    num = -num;
-  }
-  s = (uint32_t)span;
-  mag = (uint32_t)num;
-  q = (mag * s_span_inv_q16[span]) >> 16;
-  if (((q * s) + s) <= mag)
-  {
-    q++;
-  }
-  if (neg != 0)
-  {
-    return -(int32_t)q;
-  }
-  return (int32_t)q;
-}
-#endif
-
 #if 0
 /* noinline: the unsaturated tick must not carry this loop. */
 static uint32_t isqrt32(uint32_t x) __attribute__((noinline, unused));
@@ -613,8 +565,6 @@ static uint32_t isqrt32(uint32_t x)
   return r;
 }
 #endif
-
-#pragma GCC pop_options
 
 #if 0
 /* Observe Parks do not feed the PIs. Kept out of Step so the current
@@ -732,30 +682,16 @@ static fx_over_t fx_overmod_apply(int32_t va, int32_t vb, int32_t vc,
  * and it is not the signed-off current law. */
 #define FX_TICK_ARR ((int32_t)((MOTOR_PWM_TIM_CLK / (2U * MOTOR_PWM_HZ)) - 1U))
 #define FX_TICK_K   ((int32_t)((FX_TICK_ARR * 33554) / (int32_t)MOTOR_VBUS_FIXED_MV))
-#define FX_TICK_SPAN_MIN ((int32_t)((FX_TICK_ARR * 8) / 100))
-/* DTG 72 counts. Half of that is the dead-time compensation step.
- * 36/3 == 0, so inside the band the step is i * 12. */
+/* DTG 72 stays the blanking time. This step only shifts CCR.
+ * On a pulse wide enough for the edge to be a clean shift, a switching
+ * leg loses 72 timer counts: 36 CCR counts, 0.72 V at 24 V. A leg held
+ * at CCR 0 is on a rail and has no dead-time error. Inside ±3 LSB the
+ * shift is i * (HALF_DT / BAND) = i * 12. */
 #define FX_TICK_HALF_DT 36
 #define FX_TICK_DT_BAND 3
 
 #pragma GCC push_options
 #pragma GCC optimize ("Os")
-
-/* Positive truncated quotient for the 8% floor. span is 1..94 and
- * num = d * SPAN_MIN with 0 < d < span. A C '/' here lowers to
- * __divsi3 and the tick length follows the magnitude. always_inline:
- * the three floor sites must be the multiply, not a call. */
-static inline __attribute__((always_inline)) int32_t fx_span_q(int32_t num, int32_t span)
-{
-  uint32_t q = ((uint32_t)num * s_span_inv_q16[span]) >> 16;
-  uint32_t s = (uint32_t)span;
-
-  if (((q * s) + s) <= (uint32_t)num)
-  {
-    q++;
-  }
-  return (int32_t)q;
-}
 
 /* Hall calls first, alone. Phase currents must not be live across
  * those calls or the PI spills them for the whole multiply. */
@@ -854,6 +790,14 @@ static void fx_tick_pi(void)
   /* Speed loop is not on this tick. Clearing the seed matches the
    * spd_on == 0 arm of the old step. */
   s_spd_was = 0U;
+  if (s_vhold != 0U)
+  {
+    /* Fixed vd/vq for a resistance measurement. The integrators are
+     * the host's voltage command and are not updated here. */
+    vd_uv = s_id_int_uv;
+    vq_uv = s_iq_int_uv;
+  }
+  else
   {
     int32_t iq_cmd = g_motor_foc_iq_ref;
     int32_t id_cmd = g_motor_foc_id_ref;
@@ -958,9 +902,6 @@ static void fx_tick_pwm(void)
   int32_t c0;
   int32_t c1;
   int32_t c2;
-  int32_t cmin;
-  int32_t cmax;
-  int32_t span;
   uint16_t theta;
   uint8_t idx;
 
@@ -989,43 +930,6 @@ static void fx_tick_pwm(void)
   c0 = fx_clamp(((va - vmin) * FX_TICK_K) >> 15, 0, FX_TICK_ARR);
   c1 = fx_clamp(((vb - vmin) * FX_TICK_K) >> 15, 0, FX_TICK_ARR);
   c2 = fx_clamp(((vc - vmin) * FX_TICK_K) >> 15, 0, FX_TICK_ARR);
-  cmax = c0;
-  cmin = c0;
-  if (c1 > cmax)
-  {
-    cmax = c1;
-  }
-  if (c2 > cmax)
-  {
-    cmax = c2;
-  }
-  if (c1 < cmin)
-  {
-    cmin = c1;
-  }
-  if (c2 < cmin)
-  {
-    cmin = c2;
-  }
-  span = cmax - cmin;
-  if ((span > 0) && (span < FX_TICK_SPAN_MIN))
-  {
-    int32_t d;
-    int32_t add;
-
-    d = c0 - cmin;
-    add = (d == 0) ? 0 : ((d == span) ? FX_TICK_SPAN_MIN
-                          : fx_span_q(d * FX_TICK_SPAN_MIN, span));
-    c0 = fx_clamp(cmin + add, 0, FX_TICK_ARR);
-    d = c1 - cmin;
-    add = (d == 0) ? 0 : ((d == span) ? FX_TICK_SPAN_MIN
-                          : fx_span_q(d * FX_TICK_SPAN_MIN, span));
-    c1 = fx_clamp(cmin + add, 0, FX_TICK_ARR);
-    d = c2 - cmin;
-    add = (d == 0) ? 0 : ((d == span) ? FX_TICK_SPAN_MIN
-                          : fx_span_q(d * FX_TICK_SPAN_MIN, span));
-    c2 = fx_clamp(cmin + add, 0, FX_TICK_ARR);
-  }
 
   g_motor_foc_fx.ccr[0] = (uint16_t)c0;
   g_motor_foc_fx.ccr[1] = (uint16_t)c1;

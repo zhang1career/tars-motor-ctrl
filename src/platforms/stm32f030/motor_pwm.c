@@ -7,6 +7,10 @@
 #if defined(MOTOR_ADC) && (MOTOR_ADC != 0)
 #include "motor_adc.h"
 #endif
+#include "boost.h"
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+#include "motor_trace.h"
+#endif
 
 _Static_assert(offsetof(motor_pwm_prot_t, ocp_hold) == 17,
                "ocp_hold moved; host reads this byte");
@@ -326,8 +330,8 @@ void MotorPwm_SetDutiesCcr(int32_t ccr_u, int32_t ccr_v, int32_t ccr_w,
   int32_t ccr[3];
   uint8_t k;
 
-  /* Default off: ±36 counts is the same order as the 8% span floor.
-   * Host may turn it on after midrail+id is already spinning. */
+  /* Default off. The shift is ±MOTOR_TIM1_DT/2 counts on each leg.
+   * Host may turn it on after the current loop is already running. */
   for (k = 0U; k < 3U; k++)
   {
     int32_t v = raw[k];
@@ -497,6 +501,11 @@ static void motor_pwm_trip(uint8_t sw)
     motor_pwm_note_trip(sw != 0U ? 1U : 2U);
     g_motor_pwm_prot.latched = 1U;
   }
+#if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+  /* The host sees the fault a serial poll later. Stop the trace here so
+   * the last window still contains the samples that crossed the limit. */
+  g_motor_trace.mode = MOTOR_TRACE_MODE_IDLE;
+#endif
   MotorPwm_HardwareSafe();
 }
 
@@ -681,6 +690,8 @@ void MotorPwm_HardwareSafe(void)
   motor_pwm_clear_break(tim);
   s_boot_charged = 0U;
   s_boot_pending = 0U;
+  /* CH4 is the boost switch. A motor fault must not drop the gate supply. */
+  Boost_KeepAlive();
 }
 
 void MotorPwm_PinsIdle(void)
@@ -821,6 +832,12 @@ static int motor_pwm_start_channels(void)
 
 int MotorPwm_ArmOutputs(void)
 {
+  /* Gate supply has to be at 32 V before any bridge turns on. */
+  if (Boost_Ready() == 0U)
+  {
+    return 0;
+  }
+
   MotorPwm_RestoreAfPins();
 
   /* Recover HAL channel state after PinsIdle or a partial stop. */
@@ -831,11 +848,8 @@ int MotorPwm_ArmOutputs(void)
   (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
   (void)HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
   MotorPwm_HardwareSafe();
-
-  if ((htim1.Instance->CR1 & TIM_CR1_CEN) == 0U)
-  {
-    (void)HAL_TIM_Base_Start(&htim1);
-  }
+  /* PWM_Stop halted TIM1. TIM3 kept running, so the ADC edge has slipped. */
+  Boost_Resync();
 
   return motor_pwm_start_channels();
 }
@@ -954,5 +968,5 @@ void MotorPwm_Stop(void)
   (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
   (void)HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
   MotorPwm_HardwareSafe();
-  (void)HAL_TIM_Base_Start(&htim1);
+  Boost_Resync();
 }

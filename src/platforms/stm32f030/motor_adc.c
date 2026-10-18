@@ -1,6 +1,7 @@
 #include "motor_adc.h"
 #include "motor_pwm.h"
 #include "motor_tick.h"
+#include "boost.h"
 #include "board_pins.h"
 #include "main.h"
 #include "reset_diag.h"
@@ -57,31 +58,36 @@ static void motor_adc_pins_init(void)
   HAL_GPIO_Init(GPIOA, &gpio);
 }
 
-/* TIM1 CH4 exists only to time the ADC: PWM2 mode gives one OC4REF rising edge
- * per period at CCR4, and TRGO forwards it. CC4E is left clear so nothing
- * reaches PA11. */
+/* TIM1 CH4 is the boost switch, so it cannot also be the ADC lead pulse.
+ * Center-aligned TIM1 counts 0..ARR and back. One PWM period is 2*ARR
+ * clocks (2398 when ARR is 1199), not 2*(ARR+1). TIM3 must use that same
+ * count: 2400 walks two clocks per cycle and the sample lands on the
+ * switching edge. OC1REF rises MOTOR_ADC_LEAD_COUNTS before the TIM1 peak
+ * when both counters leave 0 together. CC1E stays off, so PB4/PB5 are
+ * not driven. */
 static void motor_adc_trigger_init(void)
 {
-  TIM_OC_InitTypeDef oc = {0};
-  TIM_MasterConfigTypeDef master = {0};
   uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
-  uint32_t ccr4;
+  uint32_t period;
+  uint32_t ccr;
 
-  ccr4 = (arr > MOTOR_ADC_LEAD_COUNTS) ? (arr - MOTOR_ADC_LEAD_COUNTS) : 0U;
-
-  oc.OCMode = TIM_OCMODE_PWM2;
-  oc.Pulse = ccr4;
-  oc.OCPolarity = TIM_OCPOLARITY_HIGH;
-  oc.OCFastMode = TIM_OCFAST_DISABLE;
-  oc.OCIdleState = TIM_OCIDLESTATE_RESET;
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &oc, TIM_CHANNEL_4) != HAL_OK)
+  if (arr <= MOTOR_ADC_LEAD_COUNTS)
   {
-    Error_Handler();
+    arr = MOTOR_ADC_LEAD_COUNTS + 1U;
   }
+  period = arr * 2U;
+  ccr = arr - MOTOR_ADC_LEAD_COUNTS;
 
-  master.MasterOutputTrigger = TIM_TRGO_OC4REF;
-  master.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  (void)HAL_TIMEx_MasterConfigSynchronization(&htim1, &master);
+  __HAL_RCC_TIM3_CLK_ENABLE();
+  TIM3->CR1 = 0U;
+  TIM3->PSC = 0U;
+  TIM3->ARR = period - 1U;
+  TIM3->CCR1 = ccr;
+  TIM3->CCMR1 = (7U << TIM_CCMR1_OC1M_Pos);
+  TIM3->CCER = 0U;
+  TIM3->CR2 = (4U << TIM_CR2_MMS_Pos);
+  TIM3->EGR = TIM_EGR_UG;
+  TIM3->SR = 0U;
 }
 
 void MotorAdc_Init(void)
@@ -123,7 +129,7 @@ void MotorAdc_Init(void)
   s_hadc.Init.LowPowerAutoPowerOff = DISABLE;
   s_hadc.Init.ContinuousConvMode = DISABLE;
   s_hadc.Init.DiscontinuousConvMode = DISABLE;
-  s_hadc.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T1_TRGO;
+  s_hadc.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
   s_hadc.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   s_hadc.Init.DMAContinuousRequests = ENABLE;
   /* Overwrite rather than stall: one lost conversion must not wedge the chain
@@ -263,8 +269,8 @@ int MotorAdc_Start(void)
   /* HAL_DMA_Start_IT also arms HT; one sequence must make one tick. TCIE
    * stays off until MotorTick_Start so init does not run the controller. */
   DMA1_Channel1->CCR &= ~(DMA_CCR_HTIE | DMA_CCR_TCIE);
-  /* TRGO is OC4REF. The counter must run; CH1–3 and MOE stay off. */
-  MotorPwm_RunCounter();
+  /* TIM3 TRGO is the sample edge. CH1–3 and the boost pin stay off here. */
+  Boost_Resync();
   return 1;
 }
 
@@ -337,7 +343,7 @@ int MotorAdc_PollRails(uint16_t *vref_now, uint16_t *ts_raw)
 restore:
   ADC->CCR &= ~(ADC_CCR_VREFEN | ADC_CCR_TSEN);
   ADC1->CHSELR = 0U;
-  s_hadc.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T1_TRGO;
+  s_hadc.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
   s_hadc.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   s_hadc.Init.DMAContinuousRequests = ENABLE;
   s_hadc.Init.SamplingTimeCommon = ADC_SAMPLETIME_7CYCLES_5;

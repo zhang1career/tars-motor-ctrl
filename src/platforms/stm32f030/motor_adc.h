@@ -16,12 +16,11 @@
  * below CNT, so all three low sides conduct at once. That is the sampling
  * instant, and it is also the middle of the widest conduction window available.
  *
- * Trigger chain: TIM1 CH4 in PWM2 mode produces exactly one OC4REF rising edge
- * per PWM period, as the counter passes CCR4 on the way up. CCR4 is placed
- * MOTOR_ADC_LEAD_COUNTS before the peak so the four conversions finish just
- * before the peak; DMA TC then runs the control ISR on those samples (roadmap
- * 4.1). OC4REF drives TRGO, which triggers the ADC. CC4E stays off, so PA11
- * remains a plain GPIO held low for the charge pump.
+ * Trigger chain: TIM3 counts one PWM period, edge-aligned, and OC1REF rises
+ * MOTOR_ADC_LEAD_COUNTS before the TIM1 peak. TIM3 TRGO is that edge. TIM1
+ * CH4 is the boost switch on PA11, so it is not the ADC trigger. CC1E stays
+ * off and PB4/PB5 stay GPIO. DMA TC still runs the control ISR on the four
+ * samples.
  *
  * The conversions are sequential (F030 has one ADC and no injected group), so
  * the three phases are sampled 1.67 us apart. With L/R = 673 us the current
@@ -39,11 +38,10 @@ enum
 };
 
 /*
- * PA4 VSENSE_12V is R30 39k / R31 10k on the +12V rail. That divider was
- * not moved when the power stage became 24 V, so the code is not motor
- * vdc. MOTOR_VBUS_SENSE stays 0 until a PCB respin taps the 24 V bus.
- * The conversion stays in the ADC scan so the current-sample window does
- * not move; the control law does not read the result.
+ * PA4 is the boost feedback, R30 18k / R31 1k. The motor law does not
+ * treat that code as vdc. MOTOR_VBUS_SENSE stays 0 and PWM scaling uses
+ * MOTOR_VBUS_FIXED_MV. The conversion stays in the scan so the current
+ * sample window does not move; the boost loop reads the same sample.
  *
  * While sense is off, PWM scaling uses MOTOR_VBUS_FIXED_MV.
  */

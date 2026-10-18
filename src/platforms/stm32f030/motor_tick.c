@@ -50,6 +50,20 @@ void MotorTick_PartNote(uint32_t a, uint32_t b, uint8_t i)
 /* Trace divides and keeps a pile of locals. noinline so a current
  * tick with the trace idle does not pay that prologue. */
 #if defined(MOTOR_TRACE) && (MOTOR_TRACE != 0)
+#if defined(MOTOR_FOC) && (MOTOR_FOC != 0)
+static inline int32_t fx_sat8(int32_t x)
+{
+  if (x < -127)
+  {
+    return -127;
+  }
+  if (x > 127)
+  {
+    return 127;
+  }
+  return x;
+}
+#endif
 static void motor_tick_trace(void) __attribute__((noinline));
 static void motor_tick_trace(void)
 {
@@ -121,6 +135,16 @@ static void motor_tick_trace(void)
     MotorTrace_Push((int16_t)vd_mv, (int16_t)vq_mv,
                     (int16_t)g_motor_foc_fx.sat,
                     (int16_t)g_motor_foc_fx.iq_lsb);
+  }
+  if (g_motor_trace.source == MOTOR_TRACE_SRC_FOC_DQV)
+  {
+    int32_t id = fx_sat8(g_motor_foc_fx.id_lsb);
+    int32_t iq = fx_sat8(g_motor_foc_fx.iq_lsb);
+
+    MotorTrace_Push((int16_t)((id & 0xFF) | ((iq & 0xFF) << 8)),
+                    (int16_t)(g_motor_foc_fx.vd_uv >> 10),
+                    (int16_t)(g_motor_foc_fx.vq_uv >> 10),
+                    (int16_t)(g_motor_foc_fx.theta >> 1));
   }
 #endif
 }
