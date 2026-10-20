@@ -101,7 +101,7 @@ if skip_adc:
     iu, iv = words[0] & 0xFFFF, (words[0] >> 16) & 0xFFFF
     iw, vbus_raw = words[1] & 0xFFFF, (words[1] >> 16) & 0xFFFF
     vdda = 3.31
-    lsb_ma = vdda / 4096 / (50 * 0.010) * 1000
+    lsb_ma = vdda / 4096 / (50 * 0.001) * 1000  # 1 mOhm shunt (board_pins)
     vbus = vbus_raw / 4095 * vdda * 9.2  # R30 82k / R31 10k
     vboost = float("nan")
     med = {1: iu, 2: iv, 3: iw, 4: vbus_raw}
@@ -118,7 +118,7 @@ else:
     med = {ch: statistics.median(v) for ch, v in adc.items()}
     spread = {ch: max(v) - min(v) for ch, v in adc.items()}
     vdda = 3.3 * vref_cal / med[17]
-    lsb_ma = vdda / 4096 / (50 * 0.010) * 1000
+    lsb_ma = vdda / 4096 / (50 * 0.001) * 1000  # 1 mOhm shunt (board_pins)
     volts = lambda ch: vdda * med[ch] / 4095
     vbus = volts(4) * 9.2   # (82k + 10k) / 10k on +12V rail
     vboost = volts(5) * 19.0  # R32 18k / R33 1k
@@ -192,11 +192,20 @@ if not running:
         fails.append("MOE set while idle: outputs are live")
     if ccer:
         fails.append(f"CCER 0x{ccer:04x} nonzero while idle")
-    for ch, name in ((1, "U"), (2, "V"), (3, "W")):
-        off = med[ch] - 2048
-        if abs(off) > 30:
-            fails.append(f"ISENSE_{name} zero offset {off:+.0f} LSB "
-                         f"({off * lsb_ma:+.0f} mA) at standstill")
+    offs = {name: med[ch] - 2048 for ch, name in ((1, "U"), (2, "V"), (3, "W"))}
+    cm = statistics.mean(offs.values())
+    spread_cm = max(offs.values()) - min(offs.values())
+    if spread_cm <= 8 and abs(cm) > 30:
+        fails.append(
+            f"ISENSE common-mode offset {cm:+.0f} LSB ({cm * lsb_ma:+.0f} mA) "
+            f"on U/V/W (spread {spread_cm:.0f}); zero code ~{2048 + cm:.0f} not 2048. "
+            f"DMA-sync reads match probe — check INA240 ref / idle MOE+boost sample point"
+        )
+    else:
+        for name, off in offs.items():
+            if abs(off) > 30:
+                fails.append(f"ISENSE_{name} zero offset {off:+.0f} LSB "
+                             f"({off * lsb_ma:+.0f} mA) at standstill")
 
 print()
 if fails:

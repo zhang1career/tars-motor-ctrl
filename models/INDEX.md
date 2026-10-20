@@ -1,6 +1,6 @@
 # benchgate 记录目录
 
-> 由 benchgate 自动生成，请勿手改。源数据：`models/index.jsonl`，共 266 条。生成于 2026-10-20 15:38。
+> 由 benchgate 自动生成，请勿手改。源数据：`models/index.jsonl`，共 278 条。生成于 2026-10-20 17:09。
 
 ## 当前状态
 
@@ -8,7 +8,7 @@
 
 | 类型 | 最近一次 | 结论 | 输入 | 摘要 | 记录 |
 |---|---|---|---|---|---|
-| 采集 | 2026-10-20 15:38 | 正常 | — | 附件 1 | `20261020T073815Z_8349` |
+| 采集 | 2026-10-20 17:09 | 正常 | — | 附件 1 | `20261020T090919Z_8233` |
 
 ## 记录（最新在前，最多 300 条）
 
@@ -17,6 +17,18 @@
 
 | 时间 | 类型 | 结论 | 摘要 | 目的 | 记录 |
 |---|---|---|---|---|---|
+| 17:09 | 采集 | 正常 | 附件 1 | hook 自动补记：models/captured/motor-resume-20261020/vboost-foc-run-correlate.csv | `20261020T090919Z_8233` |
+| 16:57 | 采集 | 正常 | 附件 1 | hook 自动补记：models/captured/motor-resume-20261020/vboost-run-watch.csv | `20261020T085758Z_be44` |
+| 16:46 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify full window settle400ms | `20261020T084635Z_bec1` |
+| 15:48 | 采集 | 正常 | code, stopped, i24 | stall retry dir1 | `20261020T074856Z_8857` |
+| 15:48 | 采集 | 正常 | code, stopped, i24 | sanity iq200 after stall fails | `20261020T074844Z_0055` |
+| 15:48 | 采集 | 正常 | code, stopped, i24 | STALL map iq300 no-bump | `20261020T074824Z_e3df` |
+| 15:48 | 采集 | 正常 | code, stopped, i24 | STALL map iq280 no-bump | `20261020T074812Z_a6ca` |
+| 15:47 | 采集 | 正常 | code, stopped, i24 | STALL map iq250 no-bump | `20261020T074759Z_d8fb` |
+| 15:47 | 采集 | 正常 | code, stopped, i24 | STALL boundary retry | `20261020T074741Z_3628` |
+| 15:47 | 采集 | 正常 | code, stopped, i24 | STALL boundary iq300 | `20261020T074720Z_26a2` |
+| 15:47 | 采集 | 正常 | code, stopped, i24 | STALL boundary iq280 | `20261020T074707Z_bfd6` |
+| 15:46 | 采集 | 正常 | code, stopped, i24 | STALL boundary iq250 | `20261020T074655Z_4ffd` |
 | 15:38 | 采集 | 正常 | 附件 1 | hook 自动补记：models/captured/motor-resume-20261020/b2-iq200-dqv-verify-4a.csv | `20261020T073815Z_8349` |
 | 15:38 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify-4 retry 4c | `20261020T073802Z_7a59` |
 | 15:37 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify-4 retry 4b | `20261020T073755Z_d2ec` |
