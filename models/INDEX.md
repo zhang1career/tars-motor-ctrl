@@ -1,6 +1,6 @@
 # benchgate 记录目录
 
-> 由 benchgate 自动生成，请勿手改。源数据：`models/index.jsonl`，共 183 条。生成于 2026-10-19 04:27。
+> 由 benchgate 自动生成，请勿手改。源数据：`models/index.jsonl`，共 266 条。生成于 2026-10-20 15:38。
 
 ## 当前状态
 
@@ -8,15 +8,103 @@
 
 | 类型 | 最近一次 | 结论 | 输入 | 摘要 | 记录 |
 |---|---|---|---|---|---|
-| 采集 | 2026-10-19 04:27 | 正常 | — | code, stopped, i24 | `20261018T202739Z_c434` |
+| 采集 | 2026-10-20 15:38 | 正常 | — | 附件 1 | `20261020T073815Z_8349` |
 
 ## 记录（最新在前，最多 300 条）
 
+
+### 2026-10-20
+
+| 时间 | 类型 | 结论 | 摘要 | 目的 | 记录 |
+|---|---|---|---|---|---|
+| 15:38 | 采集 | 正常 | 附件 1 | hook 自动补记：models/captured/motor-resume-20261020/b2-iq200-dqv-verify-4a.csv | `20261020T073815Z_8349` |
+| 15:38 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify-4 retry 4c | `20261020T073802Z_7a59` |
+| 15:37 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify-4 retry 4b | `20261020T073755Z_d2ec` |
+| 15:37 | 采集 | 正常 | code, stopped, i24 | B2 verify-4 retry 4a | `20261020T073748Z_0830` |
+| 15:37 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify-4 replacement full window | `20261020T073738Z_f0df` |
+| 15:37 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify-4 replacement third full window | `20261020T073702Z_7d93` |
+| 15:27 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify 3 settle400ms | `20261020T072703Z_0ae0` |
+| 15:26 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify 2 settle400ms | `20261020T072658Z_5cf4` |
+| 15:26 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify 1 settle400ms | `20261020T072652Z_0160` |
+| 15:26 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify 3 post TARS reset | `20261020T072621Z_de8e` |
+| 15:26 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify 2 post TARS reset | `20261020T072615Z_76cd` |
+| 15:26 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify 1 post TARS reset | `20261020T072609Z_6f9d` |
+| 15:16 | 采集 | 正常 | code, stopped, i24 | B2 verify 3 retry | `20261020T071635Z_e908` |
+| 15:16 | 采集 | 正常 | code, stopped, i24 | B2 verify 2 retry | `20261020T071631Z_0c61` |
+| 15:16 | 采集 | 正常 | code, stopped, i24 | B2 verify 1 retry | `20261020T071627Z_fc25` |
+| 15:16 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 verify run 3 post-review | `20261020T071609Z_9d34` |
+| 15:16 | 采集 | 正常 | code, stopped, i24 | B2 verify run 2 post-review | `20261020T071603Z_03eb` |
+| 15:15 | 采集 | 正常 | code, stopped, i24 | B2 verify run 1 post-review | `20261020T071559Z_b336` |
+| 14:57 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 confirm iq210 | `20261020T065741Z_a87f` |
+| 14:57 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 confirm iq200 | `20261020T065735Z_1a4b` |
+| 14:57 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | iq300 retry after clr | `20261020T065725Z_e65c` |
+| 14:57 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | autodrive iq270 | `20261020T065715Z_f677` |
+| 14:57 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | autodrive iq215 | `20261020T065710Z_2f80` |
+| 14:57 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | autodrive iq210 | `20261020T065705Z_f928` |
+| 14:54 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | iq300 near iqmax | `20261020T065426Z_5865` |
+| 14:54 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | iq280 stall boundary | `20261020T065421Z_2159` |
+| 14:54 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq235 PA5 DMA ok | `20261020T065415Z_e627` |
+| 14:41 | 采集 | 正常 | 附件 2 | hook 自动补记：models/captured/trace-foc_dqv-20261020-143742.csv、models/captured/trace-foc_dqv-20261020-143742.png | `20261020T064132Z_9a35` |
+| 14:41 | 采集 | 正常 | code, stopped, i24 | B2 iq235 with PA5 DMA live | `20261020T064126Z_c6a1` |
+| 14:39 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq235 post PA5 DMA fix | `20261020T063941Z_c926` |
+| 14:38 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq235 tune ~200mA | `20261020T063820Z_7186` |
+| 14:38 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq230 post-clr autodrive | `20261020T063804Z_c49f` |
+| 14:37 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq250 post-clr autodrive | `20261020T063759Z_0c30` |
+| 14:37 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq225 toward 200mA avg | `20261020T063731Z_2f11` |
+| 14:37 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq200mA dqv autodrive | `20261020T063720Z_6e51` |
+| 14:37 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq220mA dqv autodrive | `20261020T063715Z_54ad` |
+| 14:37 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq250 single window repeat | `20261020T063706Z_2606` |
+| 14:36 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq250 multi-window slow rotation | `20261020T063644Z_257b` |
+| 14:35 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 sweep 300mA foc_dqv | `20261020T063516Z_b334` |
+| 14:35 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 sweep 250mA foc_dqv | `20261020T063511Z_23f3` |
+| 14:35 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 sweep 200mA foc_dqv | `20261020T063506Z_0ba9` |
+| 14:34 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 200mA any-motion (rotor may move) | `20261020T063416Z_4c35` |
+| 14:33 | 采集 | 正常 | code, stopped, i24 | B2 200mA q hold (iq in mA) | `20261020T063357Z_68dc` |
+| 14:33 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 ~200mA q hold V_BOOST ~32V swing | `20261020T063303Z_9932` |
+| 14:30 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | iq0 after PA5 boost fallback fix | `20261020T063044Z_6028` |
+| 14:12 | 采集 | 正常 | code, stopped, i24 | iq0 retry V_BOOST ~32V stable | `20261020T061222Z_351d` |
+| 13:44 | 采集 | 正常 | code, stopped, i24 | motor resume iq0 after boost pause | `20261020T054409Z_57cb` |
+| 13:31 | 采集 | 正常 | 附件 3 | hook 自动补记：models/captured/boost-idle-watch-20261020-anchor-dither.csv、models/captured/boost-idle-watch-20261020-post-dither.csv、models/captured/boost-idle-watch-20261020-pre-dither.csv | `20261020T053110Z_c100` |
+| 12:03 | 采集 | 正常 | 附件 4 | hook 自动补记：models/captured/foc-b2-20261020/review-step1-idle-ccr4.csv、models/captured/foc-b2-20261020/review-step1-scope-20261020-115933.csv、models/captured/foc-b2-20261020/review-step1-scope-20261020-115933.png、models/captured/foc-b2-20261020/review-step1-scope-run2-20261020.csv | `20261020T040318Z_21a6` |
+| 12:01 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | review step1 32V stall V_BOOST+UVW scope | `20261020T040111Z_f2fc` |
+| 11:58 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | review step1 32V stall V_BOOST+UVW scope | `20261020T035842Z_9237` |
+| 11:58 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | review step1 32V stall V_BOOST+UVW scope | `20261020T035810Z_ce7c` |
+| 11:30 | 采集 | 正常 | code, stopped, i24 | spin check after 500ms rails revert | `20261020T033056Z_8b6e` |
+| 11:26 | 采集 | 正常 | code, stopped, i24 | iq0 nudge 400mA 3s for hall edges | `20261020T032609Z_8a81` |
+| 11:24 | 采集 | 正常 | code, stopped, i24 | iq0 dir1 no bump STALL debug | `20261020T032438Z_0694` |
+| 11:24 | 采集 | 正常 | code, stopped, i24 | iq0 no bump STALL debug | `20261020T032420Z_bfe3` |
+| 11:23 | 采集 | 正常 | code, stopped, i24 | 判据1 iq0 Oct20 autodrive | `20261020T032318Z_2bb2` |
+| 11:07 | 采集 | 正常 | code, stopped, i24 | B2 200mA Oct20 dir1 after STALL | `20261020T030702Z_8d0e` |
+| 11:06 | 采集 | 正常 | code, stopped, i24 | B2 200mA Oct20 post clr | `20261020T030607Z_c292` |
+| 11:02 | 采集 | 正常 | code, stopped, i24 | 判据1 iq0 after boost 32V fix | `20261020T030253Z_999b` |
+| 10:54 | 采集 | 正常 | code, stopped, i24 | B2 Oct20 after clr | `20261020T025427Z_cc4e` |
+| 10:49 | 采集 | 正常 | code, stopped, i24 | B2 200mA continue exp Oct20 | `20261020T024904Z_7cc7` |
+| 00:21 | 采集 | 正常 | code, stopped, i24 | B2 validation autonomous run | `20261019T162146Z_1852` |
+| 00:09 | 采集 | 正常 | code, stopped, i24 | B2 200mA validation after U driver; no hall lock | `20261019T160931Z_b4ca` |
 
 ### 2026-10-19
 
 | 时间 | 类型 | 结论 | 摘要 | 目的 | 记录 |
 |---|---|---|---|---|---|
+| 23:44 | 采集 | 正常 | code, stopped, i24 | B2 200mA no-bump; no hall lock; after kill openocd | `20261019T154449Z_3c01` |
+| 23:44 | 采集 | 正常 | code, stopped, i24 | B2 200mA no-bump; openocd restarted clean after kill daemon | `20261019T154423Z_3774` |
+| 23:41 | 采集 | 正常 | code, stopped, i24 | B2 200mA no-bump after U UCC27211 + SWD rewired | `20261019T154140Z_a809` |
+| 23:39 | 采集 | 正常 | code, stopped, i24 | B2 200mA no-bump after U driver fix; retake empty sessions | `20261019T153952Z_9cf7` |
+| 23:37 | 采集 | 正常 | 附件 4 | hook 自动补记：models/captured/foc-b2-20261019/scope-stop-retake-ch1.csv、models/captured/foc-b2-20261019/scope-stop-retake-ch2.csv、models/captured/foc-b2-20261019/scope-stop-retake-ch3.csv、models/captured/foc-b2-20261019/scope-stop-retake-ch4.csv | `20261019T153713Z_6084` |
+| 23:35 | 采集 | 正常 | code, stopped, i24 | B2 200mA no-bump after U driver fix; retake empty sessions | `20261019T153559Z_9096` |
+| 23:34 | 采集 | 正常 | code, stopped, i24 | B2 200mA no-bump after U driver fix; retake empty sessions | `20261019T153447Z_2bc9` |
+| 23:26 | 采集 | 正常 | 附件 8 | hook 自动补记：models/captured/foc-b2-20261019/scope-nfault-run-after-u-driver.csv、models/captured/foc-b2-20261019/scope-stop-u-driver-fix-ch1.csv、models/captured/foc-b2-20261019/scope-stop-u-driver-fix-ch2.csv、models/captured/foc-b2-20261019/scope-stop-u-driver-fix-ch3.csv、models/captured/foc-b2-20261019/scope-stop-u-driver-fix-ch4.csv、models/captured/foc-b2-20261019/scope-u-run-after-u-driver.csv、models/captured/foc-b2-20261019/scope-v-run-after-u-driver.csv、models/captured/foc-b2-20261019/scope-w-run-after-u-driver.csv | `20261019T152626Z_c643` |
+| 23:19 | 采集 | 正常 | code, stopped, i24 | B2 after U UCC27211 replace; U baseline 1.64V | `20261019T151902Z_779d` |
+| 23:14 | 采集 | 正常 | code, stopped, i24 | B2 repeat after UCC27211 U-phase fix | `20261019T151425Z_0bfd` |
+| 17:00 | 采集 | 正常 | 附件 3 | hook 自动补记：models/captured/foc-b2-20261019/scope-stop-ch1.csv、models/captured/foc-b2-20261019/scope-stop-ch2.csv、models/captured/foc-b2-20261019/scope-stop-ch3.csv | `20261019T090031Z_7f8e` |
+| 17:00 | 采集 | 正常 | code, stopped, i24, hall · 附件 1 | KCL i0 at ADC sample instants | `20261019T090005Z_26b5` |
+| 16:52 | 采集 | 正常 | 附件 4 | hook 自动补记：models/captured/foc-b2-20261019/scope-nfault-run.csv、models/captured/foc-b2-20261019/scope-u-run.csv、models/captured/foc-b2-20261019/scope-v-run.csv、models/captured/foc-b2-20261019/scope-w-run.csv | `20261019T085220Z_f135` |
+| 16:49 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 no bump hall6 start | `20261019T084922Z_b3db` |
+| 16:33 | 采集 | 正常 | code, stopped, i24 | 200mA vd/vq vs temp ceiling | `20261019T083354Z_58ce` |
+| 15:02 | 采集 | 正常 | 附件 2 | hook 自动补记：models/captured/ceil-20261019/scope-u-hall6.csv、models/captured/ceil-20261019/scope-v-hall6.csv | `20261019T070209Z_e6b9` |
+| 14:03 | 采集 | 正常 | 附件 4 | hook 自动补记：models/captured/ceil-20261019/scope-nfault-stop.csv、models/captured/ceil-20261019/scope-u-stop.csv、models/captured/ceil-20261019/scope-v-stop.csv、models/captured/ceil-20261019/scope-w-stop.csv | `20261019T060357Z_ec33` |
+| 13:41 | 采集 | 正常 | 附件 1 | hook 自动补记：models/captured/ceil-20261019/scope-u.csv | `20261019T054123Z_bbb6` |
+| 05:22 | 采集 | 正常 | code, stopped, i24 | 三相放大器输出对照：200毫安起转一次 | `20261018T212246Z_d086` |
 | 04:27 | 采集 | 正常 | code, stopped, i24 | 示波器看三相放大器输出时，同一次运行的相电流原始值 | `20261018T202739Z_c434` |
 | 04:07 | 采集 | 正常 | 附件 1 | hook 自动补记：models/captured/hook-record-captures-selftest/hook-record-captures-selftest.csv | `20261018T200759Z_20c9` |
 

@@ -106,7 +106,7 @@ arr, rcr = tim1[4], tim1[5]
 isr_hz = 48e6 / (2 * (arr + 1)) * 2 / (rcr + 1)
 
 vdda = 3.3 * cal[1] / statistics.median(adc[17])
-vbus = vdda * statistics.median(adc[4]) / 4095 * 4.9
+vbus = vdda * statistics.median(adc[4]) / 4095 * 9.2
 
 print(f"  readback     duty={b['duty_pct']}% phase={b['phase']} "
       f"direction={b['direction']} enabled={b['enabled']}")

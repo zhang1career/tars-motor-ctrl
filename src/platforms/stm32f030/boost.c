@@ -34,6 +34,7 @@ static uint16_t s_idle;
 static uint16_t s_filt;
 static uint8_t s_flat;
 static uint8_t s_flags;
+static uint8_t s_dma_vboost_seen;
 static uint32_t s_last;
 static uint32_t s_step_ms;
 static uint8_t s_div = 1U;
@@ -308,6 +309,15 @@ void Boost_Poll(void)
   }
   s_last = now;
   adc = g_motor_adc_raw[MOTOR_ADC_VBOOST];
+  if (adc >= 800U)
+  {
+    s_dma_vboost_seen = 1U;
+  }
+  else if (s_dma_vboost_seen == 0U)
+  {
+    /* Boot-only: PollRails before the fifth DMA slot is valid. */
+    adc = MotorAdc_VboostRaw();
+  }
   if (adc < 800U)
   {
     return;

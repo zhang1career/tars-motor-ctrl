@@ -8,8 +8,13 @@ BUILD="${BUILD_DIR:-$ROOT/build/Release}"
 ELF="$BUILD/motor-ctrl.elf"
 CFG="${OPENOCD_CFG:-$ROOT/openocd.cfg}"
 
+if [[ ! -f "$BUILD/build.ninja" && ! -f "$BUILD/Makefile" ]]; then
+  echo "missing $BUILD — run: cmake -S $ROOT -B $BUILD -G Ninja" >&2
+  exit 1
+fi
+cmake --build "$BUILD" -j 8
 if [[ ! -f "$ELF" ]]; then
-  echo "missing $ELF — run: cmake -S $ROOT -B $BUILD -G Ninja && cmake --build $BUILD" >&2
+  echo "missing $ELF after build" >&2
   exit 1
 fi
 

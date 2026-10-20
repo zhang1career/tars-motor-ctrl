@@ -832,7 +832,7 @@ static int motor_pwm_start_channels(void)
 
 int MotorPwm_ArmOutputs(void)
 {
-  /* Gate supply has to be at 32 V before any bridge turns on. */
+  /* V_BOOST (PA5) is in range and nFAULT is high; see mainboard-spec §9.5.5. */
   if (Boost_Ready() == 0U)
   {
     return 0;

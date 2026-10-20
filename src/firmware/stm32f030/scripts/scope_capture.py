@@ -6,11 +6,12 @@ conduction window? That cannot be answered from the target, because sampling is
 invisible in the analog signal -- it needs the firmware's strobe on TP1 lined up
 against the INA240 outputs.
 
-Default channel map matches the bench wiring:
-  CH1 TP1  strobe, pulses when the ADC sequence completes
-  CH2 TP11 ISENSE_U
-  CH3 TP12 ISENSE_V
-  CH4 TP13 ISENSE_W
+Default channel map (override with --labels). Bench often:
+  CH1..3  U/V/W current-amp outputs (INA240, ~1.65 V idle)
+  CH4     V_BOOST
+
+All four probes are 10x on the Rigol; set :CHANn:PROB to match or exports
+under-read by 10. Use --no-setup when the scope is already configured by hand.
 """
 from __future__ import annotations
 
@@ -37,12 +38,12 @@ def connect():
 
 
 def setup(scope, timebase: float, scale_v: float, offset_v: float,
-          trig_level: float) -> None:
+          trig_level: float, probe: float) -> None:
     scope.write(":STOP")
     for ch in (1, 2, 3, 4):
         scope.write(f":CHAN{ch}:DISP ON")
         scope.write(f":CHAN{ch}:COUP DC")
-        scope.write(f":CHAN{ch}:PROB 1")
+        scope.write(f":CHAN{ch}:PROB {probe:g}")
         scope.write(f":CHAN{ch}:BWL OFF")
     # Strobe is a 0..3.3 V logic pulse; the INA240 outputs live around 1.65 V.
     scope.write(":CHAN1:SCAL 1")
@@ -106,6 +107,8 @@ def main() -> int:
     ap.add_argument("--scale", type=float, default=0.5, help="V/div, CH2..CH4")
     ap.add_argument("--offset", type=float, default=-1.5, help="V, CH2..CH4")
     ap.add_argument("--trig-level", type=float, default=1.65)
+    ap.add_argument("--probe", type=float, default=10.0,
+                    help="Probe attenuation on all channels (Rigol :CHANn:PROB)")
     ap.add_argument("--tag", default="scope")
     ap.add_argument("-o", "--outdir", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--no-setup", action="store_true",
@@ -115,7 +118,8 @@ def main() -> int:
     scope = connect()
     print("idn       ", scope.query("*IDN?").strip())
     if not args.no_setup:
-        setup(scope, args.timebase, args.scale, args.offset, args.trig_level)
+        setup(scope, args.timebase, args.scale, args.offset, args.trig_level,
+              args.probe)
     single(scope)
     print("sample rate", scope.query(":ACQ:SRAT?").strip(), "Sa/s")
 
@@ -152,8 +156,10 @@ def main() -> int:
         axes[k].set_ylabel(LABELS[k])
         axes[k].grid(alpha=0.3)
     axes[-1].set_xlabel("time (us)")
-    axes[0].set_title(f"motor-ctrl scope: {args.tag}, {stamp}, "
-                      f"{args.timebase * 1e6:g} us/div")
+    axes[0].set_title(
+        f"motor-ctrl scope: {args.tag}, {stamp}, "
+        f"{args.timebase * 1e6:g} us/div, probe {args.probe:g}x"
+    )
     fig.tight_layout()
     png_path = csv_path.with_suffix(".png")
     fig.savefig(png_path, dpi=110)

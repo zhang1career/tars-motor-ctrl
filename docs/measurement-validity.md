@@ -173,6 +173,19 @@ trace 缓冲 256 拍只覆盖 **12.8 ms**，而 openocd 读 512 个字要约 **1
    `f = 48 MHz / (2·(ARR+1)) · 2 / (RCR+1)`，读 `ARR`/`RCR` 就能算出来，
    完全不依赖主机计时。主机计数只用来确认 ISR 没漏拍（两者应一致到 2% 内）。
 
+### 1.9 OpenOCD 与 nanoDAP（观测资源）
+
+SWD 读 trace / 快照是**观测**。`bench_common.sh` 的 `ocd_start` 会在 **6666** 上起 **OpenOCD**（`foc_hold` 等会用到），**同一时刻只能有一个**占 **nanoDAP**。
+
+**给 agent（不要改测量脚本）：**
+
+1. 连接失败时**先查是否 6666 被占**：`lsof -i :6666`；对照 `/tmp/motor-ctrl-openocd.pid`。
+2. 确认是残留进程再 **只杀该 pid**（勿 `killall openocd`，会误伤 ST-LINK 等其他板）。
+3. 用户要求停调试器后，**不要再跑** `foc_hold`，直到用户同意。
+4. 6666 已空仍 `init` 超时 → 查 SWD 接线与板子上电，不是端口问题。
+
+一次测量**内部**仍用**同一个** Tcl 会话连读（§1.8）。烧录无 6666 时 `flash.sh` 走一次性 `prog openocd … exit`。
+
 ### 1.7 寄存器读写工具的语义
 
 OpenOCD `mmw <addr> <setbits> <clearbits>` 实测是**先置位再清位，clearbits 覆盖 setbits**。
@@ -201,6 +214,7 @@ OpenOCD `mmw <addr> <setbits> <clearbits>` 实测是**先置位再清位，clear
 | `mmw` 掩码重叠 | 八种 AF 全无输出 | 引脚无此复用功能 | 1.7 |
 | 边读边写 trace 缓冲 | 规整但错误的波形，转速差 2 倍 | Hall 少了两个码 / 传感器坏 | 1.7.1 |
 | 计时窗口里夹了其他操作 | 控制环「跑在 25.7 kHz」 | `RCR` 被改坏 | 1.8 |
+| 6666 上残留 OpenOCD / 重复 `ocd_start` | `init` 超时、读 0 words、B2 代码 5 | SWD 线松 / 探头坏 | 1.9 |
 | 用带载时间测量标定几何量 | 六个 Hall 扇区「偏差 9°」 | Hall 安装角偏差（含力矩脉动） | 3.6 |
 | 拿示波器当幅度基准 | 「建立时间 24 µs」 | INA240 太慢 | 3.7 |
 | 单阈值判沿 / 稀疏打印 | 「`D_eff` = 31%」、「波形是平的」 | 死区模型错、无异常 | 3.8 |

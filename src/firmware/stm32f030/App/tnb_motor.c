@@ -40,6 +40,12 @@
 #ifndef TNB_I2C_TIMEOUT_MS
 #define TNB_I2C_TIMEOUT_MS 3000U
 #endif
+/* The current loop does not use I2C. Any address match is not a command
+ * heartbeat, and the serial console does not count either. Run until an
+ * explicit stop or a local fault. Set this to 1 to restore the bus timeout. */
+#ifndef TNB_I2C_WATCHDOG
+#define TNB_I2C_WATCHDOG 0
+#endif
 /* 1 = I2C start stays in hall6. The start timeout and HALL6_STALL_TICKS
  * count from start, so this mode stops on HALL6_ONLY_EDGE_MS without a
  * Hall edge instead. */
@@ -814,7 +820,7 @@ void TnbMotor_Telemetry(uint16_t *theta_q16, int16_t *w_eps,
   }
   if (vbus_mv != 0)
   {
-    *vbus_mv = vbus_mv_now();
+    *vbus_mv = (uint16_t)MotorAdc_VbusMv();
   }
   if (hall != 0)
   {
@@ -890,6 +896,7 @@ void TnbMotor_Task(void)
 
   sample_rail_faults();
 
+#if TNB_I2C_WATCHDOG
   if (((s_state == TNB_MOT_ST_HALL6) ||
        (s_state == TNB_MOT_ST_TORQUE) ||
        (s_state == TNB_MOT_ST_SPEED)) &&
@@ -902,6 +909,7 @@ void TnbMotor_Task(void)
     UartLog_Nl();
     return;
   }
+#endif
 
   if (s_stop_req != 0U)
   {

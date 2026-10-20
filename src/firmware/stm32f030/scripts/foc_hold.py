@@ -30,6 +30,7 @@ import sys
 import time
 from pathlib import Path
 
+import firmware_meta
 import lab_record
 import sym_cache
 import tars_cdc
@@ -47,6 +48,8 @@ STATE = {"torque": 2, "speed": 3}
 STAT_WAIT = 1.5
 START_WAIT = 12.0
 SETTLE_S = 0.15
+# Consecutive identical samples (all columns but t_us) → stale trace read.
+FREEZE_MAX_IDENTICAL = 5
 
 
 class HoldFail(SystemExit):
@@ -117,6 +120,31 @@ def lab_current() -> float | None:
     except (KeyError, IndexError, TypeError, json.JSONDecodeError, ValueError):
         sys.stderr.write(r.stdout)
         return None
+
+
+def _trace_row_key(row: dict) -> tuple[str, ...]:
+    skip = {"t_us"}
+    return tuple(f"{k}={row[k]}" for k in sorted(row.keys()) if k not in skip)
+
+
+def check_trace_not_frozen(path: Path) -> None:
+    with path.open(encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if len(rows) < 2:
+        return
+    best = 1
+    cur = 1
+    for i in range(1, len(rows)):
+        if _trace_row_key(rows[i]) == _trace_row_key(rows[i - 1]):
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 1
+    if best > FREEZE_MAX_IDENTICAL:
+        raise HoldFail(
+            f"{path.name} 有 {best} 行连续相同（>{FREEZE_MAX_IDENTICAL}），trace 冻结",
+            6,
+        )
 
 
 def summarize(path: Path) -> dict:
@@ -323,6 +351,7 @@ def step_once(name: str, new: int, orig: int, source: str, decim: int,
     write_idx = got["w8"] & 0xFFFF
     mode = got["w20"] & 0xFF
     wrapped = (got["w20"] >> 8) & 0xFF
+    depth = firmware_meta.trace_depth(ELF)
     return {
         "p1": got["p1"],
         "rb": got["rb"],
@@ -330,7 +359,8 @@ def step_once(name: str, new: int, orig: int, source: str, decim: int,
         "write_idx": write_idx,
         "mode": mode,
         "wrapped": wrapped,
-        "full": mode == 0 and wrapped == 1 and write_idx == 160,
+        "trace_depth": depth,
+        "full": mode == 0 and wrapped == 1 and write_idx == depth,
         "vq_max_uv": got["vqmax"],
         "vd_max_uv": got["vdmax"],
     }
@@ -424,7 +454,7 @@ def main() -> int:
     if args.step and args.ab:
         raise HoldFail("--step 和 --ab 不要同时用", 2)
     step_name, step_new = parse_assign(args.step) if args.step else (None, None)
-    window_s = 160 * 50e-6 * max(args.decim, 1)
+    window_s = firmware_meta.trace_window_s(args.decim, elf=ELF)
     if step_name is not None and args.hold_ms < window_s * 1000:
         raise HoldFail(f"--hold-ms {args.hold_ms} 短于窗口 {window_s * 1000:.1f} 毫秒", 2)
     pokes = [parse_assign(s) for s in args.mwb]
@@ -465,6 +495,7 @@ def main() -> int:
                                  args.decim, args.pre_ms, args.hold_ms)
                 path = window_path(base, i, nwin)
                 dump_trace(args.source, args.decim, path, arm=False)
+                check_trace_not_frozen(path)
                 st = read_stat(ser)
                 now = time.time()
                 summary = summarize(path)
@@ -487,8 +518,11 @@ def main() -> int:
                 if ab_name is not None:
                     mwb(ab_name, value)
                     time.sleep(SETTLE_S)
+                if args.any_motion:
+                    time.sleep(args.pre_ms / 1000.0 if args.pre_ms > 0 else 0.4)
                 path = window_path(base, i, len(ab_values))
                 dump_trace(args.source, args.decim, path)
+                check_trace_not_frozen(path)
                 st = read_stat(ser)
                 summary = summarize(path)
                 summary["stat"] = st

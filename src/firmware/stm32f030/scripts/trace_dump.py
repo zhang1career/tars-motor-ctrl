@@ -48,7 +48,7 @@ DEG_PER_Q15 = 360.0 / 32768.0   # theta is stored as theta_q16 >> 1
 DEG_PER_Q16 = 360.0 / 65536.0
 
 MA_PER_LSB = 3.3124 / 4096 / (50 * 0.010) * 1000  # INA240A2 gain 50, 10 mOhm
-VBUS_V_PER_LSB = 3.3124 / 4095 * 4.9              # R30 39k / R31 10k
+VBUS_V_PER_LSB = 3.3124 / 4095 * 9.2              # R30 82k / R31 10k (+12V rail)
 
 
 def sym_addr(elf: Path, name: str) -> int:
