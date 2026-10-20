@@ -13,6 +13,7 @@ static DMA_HandleTypeDef s_hdma;
 static uint8_t s_ready;
 static uint16_t s_ntc_raw;
 static uint16_t s_vboost_raw;
+static uint16_t s_v12_mv;
 
 static uint16_t adc_sw_one(ADC_HandleTypeDef *hadc, uint32_t channel)
 {
@@ -44,6 +45,16 @@ uint16_t MotorAdc_NtcRaw(void)
 uint16_t MotorAdc_VboostRaw(void)
 {
   return s_vboost_raw;
+}
+
+void MotorAdc_NotifyVboostSample(uint16_t raw)
+{
+  s_vboost_raw = raw;
+}
+
+uint16_t MotorAdc_VbusRailMv(void)
+{
+  return s_v12_mv;
 }
 
 static void motor_adc_pins_init(void)
@@ -134,7 +145,7 @@ void MotorAdc_Init(void)
   s_hadc.Init.DMAContinuousRequests = ENABLE;
   /* Overwrite rather than stall: one lost conversion must not wedge the chain
    * that the current loop depends on. A shifted channel mapping is detectable
-   * because VBUS reads ~3020 while the current channels sit near 2048. */
+   * because VBUS reads ~3240 at 24 V while the current channels sit near 2048. */
   s_hadc.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;
   s_hadc.Init.SamplingTimeCommon = ADC_SAMPLETIME_7CYCLES_5;
 
@@ -158,6 +169,8 @@ void MotorAdc_Init(void)
   /* Kept in the scan so IU/IV/IW stay on the same timetable. With
    * MOTOR_VBUS_SENSE=0 the code is not motor vdc; see MotorAdc_VbusMv. */
   ch.Channel = BOARD_ADC_VBUS_CH;
+  (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
+  ch.Channel = BOARD_ADC_VBOOST_CH;
   (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
 
   if (HAL_ADCEx_Calibration_Start(&s_hadc) != HAL_OK)
@@ -296,6 +309,8 @@ static void motor_adc_foc_channels(void)
   (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
   ch.Channel = BOARD_ADC_VBUS_CH;
   (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
+  ch.Channel = BOARD_ADC_VBOOST_CH;
+  (void)HAL_ADC_ConfigChannel(&s_hadc, &ch);
 }
 
 int MotorAdc_PollRails(uint16_t *vref_now, uint16_t *ts_raw)
@@ -330,6 +345,16 @@ int MotorAdc_PollRails(uint16_t *vref_now, uint16_t *ts_raw)
   ts = adc_sw_one(&s_hadc, ADC_CHANNEL_TEMPSENSOR);
   s_ntc_raw = adc_sw_one(&s_hadc, BOARD_ADC_NTC_CH);
   s_vboost_raw = adc_sw_one(&s_hadc, BOARD_ADC_VBOOST_CH);
+  {
+    uint32_t mv = ((uint32_t)adc_sw_one(&s_hadc, BOARD_ADC_VBUS_CH) *
+                   (uint32_t)MOTOR_VBUS_MV_MUL) >> 10;
+
+    if (mv > 65535U)
+    {
+      mv = 65535U;
+    }
+    s_v12_mv = (uint16_t)mv;
+  }
 
   if (vref_now != 0)
   {

@@ -69,9 +69,9 @@ int main(void)
 #if defined(MOTOR_FOC_FLOAT) && (MOTOR_FOC_FLOAT != 0)
     MotorFoc_Step();
 #endif
-    MotorVsweep_Poll();
     TnbNode_Task();
     Boost_Poll();
+    MotorVsweep_Poll();
     g_reset_diag[RESET_DIAG_MAIN_TICK_SEEN] = g_reset_diag[RESET_DIAG_TICK_TOTAL];
     Watchdog_Kick();
   }

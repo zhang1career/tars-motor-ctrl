@@ -51,11 +51,8 @@
 #define BOARD_ADC_IU_CH        ADC_CHANNEL_1   /* PA1 ISENSE_U ← INA240_U.OUT */
 #define BOARD_ADC_IV_CH        ADC_CHANNEL_2   /* PA2 ISENSE_V ← INA240_V.OUT */
 #define BOARD_ADC_IW_CH        ADC_CHANNEL_3   /* PA3 ISENSE_W ← INA240_W.OUT */
-#define BOARD_ADC_VBUS_CH      ADC_CHANNEL_4   /* PA4 VSENSE_12V, R30 39k / R31 10k.
-                                             * Still on +12V. Not the 24 V motor
-                                             * bus; firmware ignores it until the
-                                             * divider is moved. */
-#define BOARD_ADC_VBOOST_CH    ADC_CHANNEL_5   /* PA5 VSENSE_V_BOOST, R32 68k / R33 10k */
+#define BOARD_ADC_VBUS_CH      ADC_CHANNEL_4   /* PA4 VSENSE_24V, R30 82k / R31 10k */
+#define BOARD_ADC_VBOOST_CH    ADC_CHANNEL_5   /* PA5 VSENSE_V_BOOST, R32 18k / R33 1k */
 
 /* Current front end: INA240A2 (gain 50) across the 10 mOhm half-bridge shunt,
  * mid-rail referenced by dividing +3V3A internally.
@@ -72,10 +69,10 @@
 #define BOARD_SHUNT_MILLIOHM     1
 
 /* Divider ratios as integer fractions, for scaling without floating point. */
-#define BOARD_VBUS_DIV_NUM       49   /* (39k + 10k) / 10k */
+#define BOARD_VBUS_DIV_NUM       92   /* (82k + 10k) / 10k */
 #define BOARD_VBUS_DIV_DEN       10
-#define BOARD_VBOOST_DIV_NUM     78   /* (68k + 10k) / 10k */
-#define BOARD_VBOOST_DIV_DEN     10
+#define BOARD_VBOOST_DIV_NUM     19   /* (18k + 1k) / 1k */
+#define BOARD_VBOOST_DIV_DEN     1
 
 /* ---- Hall (digital, 3.3 V): yellow / green / blue ---- */
 #define BOARD_HALL_A_PIN       GPIO_PIN_3   /* PB3 — HALL_A (yellow Ha) */

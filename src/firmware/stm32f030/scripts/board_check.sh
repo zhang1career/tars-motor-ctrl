@@ -102,7 +102,7 @@ if skip_adc:
     iw, vbus_raw = words[1] & 0xFFFF, (words[1] >> 16) & 0xFFFF
     vdda = 3.31
     lsb_ma = vdda / 4096 / (50 * 0.010) * 1000
-    vbus = vbus_raw / 4095 * vdda * 4.9
+    vbus = vbus_raw / 4095 * vdda * 9.2  # R30 82k / R31 10k
     vboost = float("nan")
     med = {1: iu, 2: iv, 3: iw, 4: vbus_raw}
     spread = {1: 0, 2: 0, 3: 0}
@@ -120,8 +120,8 @@ else:
     vdda = 3.3 * vref_cal / med[17]
     lsb_ma = vdda / 4096 / (50 * 0.010) * 1000
     volts = lambda ch: vdda * med[ch] / 4095
-    vbus = volts(4) * 4.9
-    vboost = volts(5) * 7.8
+    vbus = volts(4) * 9.2   # (82k + 10k) / 10k on +12V rail
+    vboost = volts(5) * 19.0  # R32 18k / R33 1k
     r_ntc = 10000 * (vdda / volts(0) - 1)
     ts = med[16] * vdda / 3.3
     die_c = 30 + (ts - ts_cal1) * 80 / (ts_cal2 - ts_cal1)

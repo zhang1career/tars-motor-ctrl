@@ -31,9 +31,11 @@ volatile struct boost_mon g_boost __attribute__((aligned(4)));
 
 static uint16_t s_duty;
 static uint16_t s_idle;
+static uint16_t s_filt;
 static uint8_t s_flat;
 static uint8_t s_flags;
 static uint32_t s_last;
+static uint32_t s_step_ms;
 static uint8_t s_div = 1U;
 
 static void boost_kick(void)
@@ -135,6 +137,17 @@ static uint16_t boost_mv(uint16_t adc)
   return (uint16_t)(((uint32_t)adc * 3300U * BOOST_DIV_NUM) / 4095U);
 }
 
+static uint16_t boost_ccr_hw(uint16_t duty)
+{
+  if (duty > BOOST_DUTY_MAX)
+  {
+    duty = BOOST_DUTY_MAX;
+  }
+  return (uint16_t)(((uint32_t)duty * (uint32_t)BOOST_CCR_HW_MAX +
+                     ((uint32_t)BOOST_DUTY_MAX / 2U)) /
+                    (uint32_t)BOOST_DUTY_MAX);
+}
+
 static void boost_force(uint16_t duty)
 {
   if (duty > BOOST_DUTY_MAX)
@@ -142,7 +155,7 @@ static void boost_force(uint16_t duty)
     duty = BOOST_DUTY_MAX;
   }
   s_duty = duty;
-  TIM1->CCR4 = duty;
+  TIM1->CCR4 = boost_ccr_hw(duty);
 }
 
 void Boost_Step(uint16_t adc)
@@ -176,8 +189,7 @@ void Boost_Step(uint16_t adc)
     }
   }
 
-  s_duty = duty;
-  TIM1->CCR4 = duty;
+  boost_force(duty);
 }
 
 uint8_t Boost_Ready(void)
@@ -295,15 +307,27 @@ void Boost_Poll(void)
     return;
   }
   s_last = now;
-  adc = g_motor_adc_raw[MOTOR_ADC_VBUS];
+  adc = g_motor_adc_raw[MOTOR_ADC_VBOOST];
   if (adc < 800U)
   {
     return;
   }
+  if (s_filt == 0U)
+  {
+    s_filt = adc;
+  }
+  else
+  {
+    s_filt = (uint16_t)(((uint32_t)s_filt * 15U + (uint32_t)adc) >> 4);
+  }
+  g_boost.adc = s_filt;
+  g_boost.mv = boost_mv(s_filt);
+  g_boost.duty = s_duty;
+
   duty = s_duty;
   if (s_idle == 0U)
   {
-    if (adc > 2200U)
+    if (s_filt > 2200U)
     {
       s_flags = (uint8_t)((s_flags | BF_HOLD) & (uint8_t)~BF_READY);
       boost_mark(BOOST_ST_RANGE);
@@ -311,7 +335,7 @@ void Boost_Poll(void)
     }
     else
     {
-      s_idle = adc;
+      s_idle = s_filt;
     }
   }
   if ((s_flags & BF_HOLD) != 0U)
@@ -326,26 +350,35 @@ void Boost_Poll(void)
   }
   else
   {
-    if ((uint16_t)(adc + BOOST_BAND) >= BOOST_SET_CODE)
+    if ((s_filt >= BOOST_READY_LO) && (s_filt <= BOOST_HI_CODE))
     {
       s_flags |= BF_READY;
       boost_mark(BOOST_ST_RUN);
     }
-    if ((uint16_t)(adc + BOOST_BAND) < BOOST_SET_CODE)
+    else if (s_filt < BOOST_READY_LO)
     {
-      if (duty < BOOST_DUTY_MAX)
+      s_flags = (uint8_t)(s_flags & (uint8_t)~BF_READY);
+    }
+    if ((now - s_step_ms) >= BOOST_STEP_MIN_MS)
+    {
+      if (s_filt < BOOST_LO_CODE)
       {
-        duty++;
+        if (duty < BOOST_DUTY_MAX)
+        {
+          duty++;
+          s_step_ms = now;
+        }
+      }
+      else if (s_filt > BOOST_HI_CODE)
+      {
+        if (duty > 0U)
+        {
+          duty--;
+          s_step_ms = now;
+        }
       }
     }
-    else if (adc > (uint16_t)(BOOST_SET_CODE + BOOST_BAND))
-    {
-      if (duty > 0U)
-      {
-        duty--;
-      }
-    }
-    if ((duty == BOOST_DUTY_MAX) && (adc < (uint16_t)(s_idle + 15U)))
+    if ((duty == BOOST_DUTY_MAX) && (s_filt < (uint16_t)(s_idle + 15U)))
     {
       if (++s_flat >= 200U)
       {
@@ -359,8 +392,8 @@ void Boost_Poll(void)
       s_flat = 0U;
     }
   }
-  s_duty = duty;
-  TIM1->CCR4 = duty;
+  boost_force(duty);
+  g_boost.duty = s_duty;
 }
 
 void Boost_OnPwmTick(uint16_t adc)

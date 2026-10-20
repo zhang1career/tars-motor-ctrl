@@ -19,35 +19,34 @@
  * Trigger chain: TIM3 counts one PWM period, edge-aligned, and OC1REF rises
  * MOTOR_ADC_LEAD_COUNTS before the TIM1 peak. TIM3 TRGO is that edge. TIM1
  * CH4 is the boost switch on PA11, so it is not the ADC trigger. CC1E stays
- * off and PB4/PB5 stay GPIO. DMA TC still runs the control ISR on the four
+ * off and PB4/PB5 stay GPIO. DMA TC still runs the control ISR on the five
  * samples.
  *
  * The conversions are sequential (F030 has one ADC and no injected group), so
- * the three phases are sampled 1.67 us apart. With L/R = 673 us the current
- * moves ~23 mA in that time, comparable to the noise floor.
+ * the phases are sampled 1.67 us apart. With L/R = 673 us the current moves
+ * ~23 mA in that time, comparable to the noise floor.
  */
 
-#define MOTOR_ADC_CH_COUNT 4U
+#define MOTOR_ADC_CH_COUNT 5U
 
 enum
 {
-  MOTOR_ADC_IU = 0U,   /* PA1, ADC_IN1 */
-  MOTOR_ADC_IV = 1U,   /* PA2, ADC_IN2 */
-  MOTOR_ADC_IW = 2U,   /* PA3, ADC_IN3 */
-  MOTOR_ADC_VBUS = 3U  /* PA4, ADC_IN4. Sample kept; see MotorAdc_VbusMv. */
+  MOTOR_ADC_IU = 0U,     /* PA1, ADC_IN1 */
+  MOTOR_ADC_IV = 1U,     /* PA2, ADC_IN2 */
+  MOTOR_ADC_IW = 2U,     /* PA3, ADC_IN3 */
+  MOTOR_ADC_VBUS = 3U,   /* PA4, ADC_IN4. Sample kept; see MotorAdc_VbusMv. */
+  MOTOR_ADC_VBOOST = 4U  /* PA5, ADC_IN5. Charge-pump feedback (Boost_Poll). */
 };
 
 /*
- * PA4 is the boost feedback, R30 18k / R31 1k. The motor law does not
- * treat that code as vdc. MOTOR_VBUS_SENSE stays 0 and PWM scaling uses
- * MOTOR_VBUS_FIXED_MV. The conversion stays in the scan so the current
- * sample window does not move; the boost loop reads the same sample.
- *
- * While sense is off, PWM scaling uses MOTOR_VBUS_FIXED_MV.
+ * PA4 is the 24 V motor bus, R30 82k / R31 10k (see mainboard-spec §9.5.1).
+ * PA5 is V_BOOST for the charge-pump loop only (§9.5.2).
  */
 #ifndef MOTOR_VBUS_SENSE
-#define MOTOR_VBUS_SENSE 0
+#define MOTOR_VBUS_SENSE 1
 #endif
+/* (3300 mV * 92/10) / 4095 * 1024, for rail mV from PA4 raw. */
+#define MOTOR_VBUS_MV_MUL 7580U
 #ifndef MOTOR_VBUS_FIXED_MV
 #define MOTOR_VBUS_FIXED_MV 24000
 #endif
@@ -83,6 +82,10 @@ int  MotorAdc_PollRails(uint16_t *vref_now, uint16_t *ts_raw);
 /* Last PA0 / PA5 codes from PollRails. 0 if never sampled. */
 uint16_t MotorAdc_NtcRaw(void);
 uint16_t MotorAdc_VboostRaw(void);
+/* Boot rail sample before MotorAdc DMA is up (TnbNode_SampleRails). */
+void MotorAdc_NotifyVboostSample(uint16_t raw);
+/* Last PA4 rail sample from PollRails (same 82k/10k scale as VbusMv). */
+uint16_t MotorAdc_VbusRailMv(void);
 
 /* DMA TC is the control-tick source (MotorTick_Start / Stop). */
 void MotorAdc_EnableTick(void);
@@ -97,13 +100,11 @@ static inline int16_t MotorAdc_ShuntLsb(uint8_t idx)
   return (int16_t)((int32_t)g_motor_adc_raw[idx] - 2048);
 }
 
-/* Millivolts the modulator should treat as DC bus.
- * Sense on: 3.9639 mV/LSB * 1024 = 4058, R30/R31 = 4.9, result in mV.
- * Sense off: the fixed power-stage voltage, not the PA4 code. */
+/* Millivolts the modulator should treat as DC bus (24 V divider on PA4). */
 static inline int32_t MotorAdc_VbusMv(void)
 {
 #if MOTOR_VBUS_SENSE
-  int32_t vmv = ((int32_t)g_motor_adc_raw[MOTOR_ADC_VBUS] * 4058) >> 10;
+  int32_t vmv = ((int32_t)g_motor_adc_raw[MOTOR_ADC_VBUS] * (int32_t)MOTOR_VBUS_MV_MUL) >> 10;
 
   if (vmv < 0)
   {

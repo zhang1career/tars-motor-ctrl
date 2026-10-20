@@ -639,6 +639,7 @@ void TnbNode_SampleRails(void)
   (void)HAL_ADC_DeInit(&hadc);
   apply_rail_cal(vref_now, ts_raw);
   apply_aux(ntc_raw, vboost_raw);
+  MotorAdc_NotifyVboostSample(vboost_raw);
 }
 
 void TnbNode_Init(void)

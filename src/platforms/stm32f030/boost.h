@@ -7,22 +7,28 @@
  * 24 V -> 32 V boost on PA11 / TIM1_CH4. Q1 is BSS138, L1 is 10 uH,
  * switching at the motor PWM rate (20 kHz, center-aligned ARR 1199).
  *
- * On-time is 2*CCR/48 MHz. One CCR count is 0.10 A of ideal peak current.
- * CCR 8 is 0.80 A, the saturation current already chosen for L1.
+ * On-time is 2*CCR/48 MHz. Logical duty 0..BOOST_DUTY_MAX maps linearly to
+ * TIM1 CCR4 0..BOOST_CCR_HW_MAX (peak drive unchanged; finer steps).
  *
- * The motor image steps this from the main loop, once per millisecond, off
- * the PA4 sample already in the PWM ADC scan. The current-loop tick does
- * not call it. Boost_OnPwmTick is the same 1 kHz step for a caller that
- * is already inside the PWM period.
+ * Closed loop on PA5 VSENSE_V_BOOST (R32/R33 18k/1k), sampled in the same
+ * PWM-synchronised DMA scan as the phase currents. Boost_Poll low-pass filters
+ * PA5 (~16 ms), steps CCR4 only outside a wide deadband and at most once per
+ * BOOST_STEP_MIN_MS. The current-loop tick does not call it.
  */
 
-/* (18k + 1k) / 1k. PA4 code = Vout / 19 / 3.3 * 4095. */
+/* (18k + 1k) / 1k. PA5 code = V_BOOST / 19 / 3.3 V * 4095. */
 #define BOOST_DIV_NUM     19U
 #define BOOST_SET_MV      32000U
-#define BOOST_SET_CODE    2090U   /* 32.00 V */
+#define BOOST_SET_CODE    2090U   /* 32.00 V on V_BOOST */
 #define BOOST_OV_CODE     2351U   /* 36.0 V, under the 40 V diode */
-#define BOOST_BAND        2U
-#define BOOST_DUTY_MAX    8U
+#define BOOST_LO_CODE     2040U   /* ~31.2 V: may step duty up */
+#define BOOST_HI_CODE     2140U   /* ~32.8 V: may step duty down */
+#define BOOST_READY_LO    2000U   /* ~30.6 V: Boost_Ready / MOE */
+/* >2×20 ms @ 50 Hz mains; prime vs 20/10 ms cadences. Not for amplitude. */
+#define BOOST_STEP_MIN_MS 43U
+#define BOOST_BAND        2U      /* Boost_Step / bringup only */
+#define BOOST_CCR_HW_MAX  8U      /* TIM1->CCR4 at full logical duty */
+#define BOOST_DUTY_MAX    16U     /* logical notches mapped to CCR 0..8 */
 
 #define BOOST_ST_CLOCK    1U
 #define BOOST_ST_RANGE    2U
@@ -31,7 +37,7 @@
 
 void Boost_Init(void);
 void Boost_Poll(void);
-/* 1 after PA4 has reached the 32 V window. Stays 1 through a small dip. */
+/* 1 after PA5 has reached the 32 V window. Stays 1 through a small dip. */
 uint8_t Boost_Ready(void);
 /* HardwareSafe drops every TIM1 channel. Put CH4 and MOE back. */
 void Boost_KeepAlive(void);

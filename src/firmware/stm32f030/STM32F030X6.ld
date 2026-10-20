@@ -34,7 +34,7 @@ _estack = 0x20001000;    /* end of 4K RAM */
  * buffer and the FOC state. Kept as a named symbol so raising it is a one-line
  * change if a heap is ever needed. */
 _Min_Heap_Size = 0x0;        /* required amount of heap  */
-_Min_Stack_Size = 0x600; /* I2C + FOC ISR nest */
+_Min_Stack_Size = 0x550; /* I2C + FOC ISR nest; was 0x600, trimmed for trace depth 160 */
 
 /* Specify the memory areas */
 MEMORY
