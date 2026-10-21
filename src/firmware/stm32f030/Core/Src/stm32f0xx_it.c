@@ -78,6 +78,11 @@ void DMA1_Channel1_IRQHandler(void)
 {
   MotorAdc_DmaIrq();
 }
+
+/* Startup weak default spins here and wedges the core if ADC1_IRQn fires. */
+void ADC1_IRQHandler(void)
+{
+}
 #endif
 
 void I2C1_IRQHandler(void)

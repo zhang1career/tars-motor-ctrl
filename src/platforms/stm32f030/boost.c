@@ -22,19 +22,9 @@ struct boost_mon {
 
 volatile struct boost_mon g_boost __attribute__((aligned(4)));
 
-/* Bits: 0 ready, 1 alive, 2 inited, 3 hold, 4 wait, 5-7 state. */
-#define BF_READY 0x01U
-#define BF_ALIVE 0x02U
-#define BF_INIT  0x04U
-#define BF_HOLD  0x08U
-#define BF_WAIT  0x10U
-
 static uint16_t s_duty;
-static uint16_t s_idle;
 static uint16_t s_filt;
-static uint8_t s_flat;
-static uint8_t s_flags;
-static uint8_t s_dma_vboost_seen;
+static uint8_t s_on;
 static uint32_t s_last;
 static uint32_t s_step_ms;
 static uint8_t s_div = 1U;
@@ -166,27 +156,19 @@ void Boost_Step(uint16_t adc)
   if (adc > BOOST_OV_CODE)
   {
     duty = 0U;
-    s_flags = (uint8_t)(s_flags & (uint8_t)~BF_READY);
   }
-  else
+  else if ((uint16_t)(adc + BOOST_BAND) < BOOST_SET_CODE)
   {
-    if ((uint16_t)(adc + BOOST_BAND) >= BOOST_SET_CODE)
+    if (duty < BOOST_DUTY_MAX)
     {
-      s_flags |= BF_READY;
+      duty++;
     }
-    if ((uint16_t)(adc + BOOST_BAND) < BOOST_SET_CODE)
+  }
+  else if (adc > (uint16_t)(BOOST_SET_CODE + BOOST_BAND))
+  {
+    if (duty > 0U)
     {
-      if (duty < BOOST_DUTY_MAX)
-      {
-        duty++;
-      }
-    }
-    else if (adc > (uint16_t)(BOOST_SET_CODE + BOOST_BAND))
-    {
-      if (duty > 0U)
-      {
-        duty--;
-      }
+      duty--;
     }
   }
 
@@ -195,12 +177,16 @@ void Boost_Step(uint16_t adc)
 
 uint8_t Boost_Ready(void)
 {
-  return (s_flags & BF_READY) != 0U;
+  if (s_filt < 800U)
+  {
+    return 0U;
+  }
+  return (s_filt >= BOOST_READY_LO) && (s_filt <= BOOST_OV_CODE);
 }
 
 void Boost_KeepAlive(void)
 {
-  if ((s_flags & BF_ALIVE) == 0U)
+  if (s_on == 0U)
   {
     return;
   }
@@ -242,24 +228,48 @@ void Boost_Resync(void)
   }
 }
 
-static void boost_mark(uint8_t state)
+static uint16_t boost_read_pa5(void)
 {
-  s_flags = (uint8_t)((s_flags & 0x1FU) | (uint8_t)(state << 5));
+  uint16_t dma = g_motor_adc_raw[MOTOR_ADC_VBOOST];
+  uint16_t poll = MotorAdc_VboostRaw();
+  uint16_t adc = dma;
+
+  if (poll >= 800U)
+  {
+    /* DMA can read PA4/VBUS (~3200) in the VBOOST slot after reset; trust PA5. */
+    if ((dma < 800U) || (dma + 400U < poll) || (dma > (uint16_t)(poll + 400U)))
+    {
+      adc = poll;
+    }
+  }
+  else if (dma < 800U)
+  {
+    adc = poll;
+  }
+  return adc;
 }
 
 void Boost_Init(void)
 {
-  boost_pin_low();
   if (SystemCoreClock < 40000000U)
   {
-    boost_mark(BOOST_ST_CLOCK);
+    g_boost.state = BOOST_ST_CLOCK;
     return;
   }
   /* CH3 occupies the low half of CCMR2. Touch only CH4. */
   TIM1->CCMR2 = (TIM1->CCMR2 & ~TIM_CCMR2_OC4M_Msk) |
                 (6U << TIM_CCMR2_OC4M_Pos) | TIM_CCMR2_OC4PE;
   TIM1->CCR4 = 0U;
-  s_flags |= BF_INIT;
+  s_filt = 0U;
+  s_duty = 0U;
+  s_last = 0U;
+  s_step_ms = 0U;
+  g_boost.magic = 0xB005U;
+  g_boost.state = BOOST_ST_RUN;
+  boost_pin_af();
+  (void)MotorAdc_BootstrapVboost();
+  TIM1->SR &= ~TIM_SR_BIF;
+  s_on = 1U;
 }
 
 void Boost_Poll(void)
@@ -268,60 +278,58 @@ void Boost_Poll(void)
   uint16_t adc;
   uint16_t duty;
 
-  if ((s_flags & BF_INIT) == 0U)
+  if (s_on == 0U)
   {
     return;
   }
+
+  if ((g_motor_pwm_prot.ocp_zero_ready == 0U) && (HAL_GetTick() < 200U))
+  {
+    return;
+  }
+
+  {
+    uint32_t primask = __get_PRIMASK();
+
+    __disable_irq();
+    if (((TIM1->SR & TIM_SR_BIF) != 0U) &&
+        ((GPIOA->IDR & BOARD_NFAULT_PIN) != 0U) &&
+        ((TIM1->CCER & (TIM_CCER_CC1E | TIM_CCER_CC1NE | TIM_CCER_CC2E |
+                        TIM_CCER_CC2NE | TIM_CCER_CC3E | TIM_CCER_CC3NE)) == 0U))
+    {
+      TIM1->SR = ~TIM_SR_BIF;
+    }
+    if (primask == 0U)
+    {
+      __enable_irq();
+    }
+  }
+
+  Boost_KeepAlive();
+
+  if ((TIM1->BDTR & TIM_BDTR_MOE) == 0U)
+  {
+    boost_force(0U);
+    g_boost.duty = 0U;
+    return;
+  }
+
   now = HAL_GetTick();
-  if ((s_flags & BF_ALIVE) == 0U)
-  {
-    /* Shunt zero is collected while MOE is off. s_last is that deadline
-     * until the switch turns on. Do not block forever if the shunts never
-     * sit still. */
-    if ((s_flags & BF_WAIT) == 0U)
-    {
-      s_flags |= BF_WAIT;
-      s_last = now;
-    }
-    if ((g_motor_pwm_prot.ocp_zero_ready == 0U) && ((now - s_last) < 200U))
-    {
-      return;
-    }
-    s_duty = 0U;
-    TIM1->CCR4 = 0U;
-    if ((GPIOA->IDR & BOARD_NFAULT_PIN) != 0U)
-    {
-      TIM1->SR &= ~TIM_SR_BIF;
-    }
-    TIM1->CCER |= TIM_CCER_CC4E;
-    if ((TIM1->SR & TIM_SR_BIF) == 0U)
-    {
-      TIM1->BDTR |= TIM_BDTR_MOE;
-    }
-    boost_pin_af();
-    s_flags |= BF_ALIVE;
-    s_last = now;
-    return;
-  }
   if (now == s_last)
   {
     return;
   }
   s_last = now;
-  adc = g_motor_adc_raw[MOTOR_ADC_VBOOST];
-  if (adc >= 800U)
-  {
-    s_dma_vboost_seen = 1U;
-  }
-  else if (s_dma_vboost_seen == 0U)
-  {
-    /* Boot-only: PollRails before the fifth DMA slot is valid. */
-    adc = MotorAdc_VboostRaw();
-  }
+
+  adc = boost_read_pa5();
   if (adc < 800U)
   {
+    boost_force(0U);
+    s_filt = 0U;
+    g_boost.duty = 0U;
     return;
   }
+
   if (s_filt == 0U)
   {
     s_filt = adc;
@@ -332,76 +340,33 @@ void Boost_Poll(void)
   }
   g_boost.adc = s_filt;
   g_boost.mv = boost_mv(s_filt);
-  g_boost.duty = s_duty;
+  g_boost.state = BOOST_ST_RUN;
 
   duty = s_duty;
-  if (s_idle == 0U)
+  if (adc > BOOST_OV_CODE)
   {
-    if (s_filt > 2200U)
-    {
-      s_flags = (uint8_t)((s_flags | BF_HOLD) & (uint8_t)~BF_READY);
-      boost_mark(BOOST_ST_RANGE);
-      duty = 0U;
-    }
-    else
-    {
-      s_idle = s_filt;
-    }
-  }
-  if ((s_flags & BF_HOLD) != 0U)
-  {
-    s_flags = (uint8_t)(s_flags & (uint8_t)~BF_READY);
     duty = 0U;
   }
-  else if (adc > BOOST_OV_CODE)
+  else if ((now - s_step_ms) >= BOOST_STEP_MIN_MS)
   {
-    s_flags = (uint8_t)(s_flags & (uint8_t)~BF_READY);
-    duty = 0U;
-  }
-  else
-  {
-    if ((s_filt >= BOOST_READY_LO) && (s_filt <= BOOST_HI_CODE))
+    if (s_filt < BOOST_LO_CODE)
     {
-      s_flags |= BF_READY;
-      boost_mark(BOOST_ST_RUN);
-    }
-    else if (s_filt < BOOST_READY_LO)
-    {
-      s_flags = (uint8_t)(s_flags & (uint8_t)~BF_READY);
-    }
-    if ((now - s_step_ms) >= BOOST_STEP_MIN_MS)
-    {
-      if (s_filt < BOOST_LO_CODE)
+      if (duty < BOOST_DUTY_MAX)
       {
-        if (duty < BOOST_DUTY_MAX)
-        {
-          duty++;
-          s_step_ms = now;
-        }
-      }
-      else if (s_filt > BOOST_HI_CODE)
-      {
-        if (duty > 0U)
-        {
-          duty--;
-          s_step_ms = now;
-        }
+        duty++;
+        s_step_ms = now;
       }
     }
-    if ((duty == BOOST_DUTY_MAX) && (s_filt < (uint16_t)(s_idle + 15U)))
+    else if (s_filt > BOOST_HI_CODE)
     {
-      if (++s_flat >= 200U)
+      if (duty > 0U)
       {
-        s_flags = (uint8_t)((s_flags | BF_HOLD) & (uint8_t)~BF_READY);
-        boost_mark(BOOST_ST_SENSE);
-        duty = 0U;
+        duty--;
+        s_step_ms = now;
       }
-    }
-    else
-    {
-      s_flat = 0U;
     }
   }
+
   boost_force(duty);
   g_boost.duty = s_duty;
 }

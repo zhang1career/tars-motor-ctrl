@@ -25,6 +25,8 @@ volatile uint32_t g_reset_diag[RESET_DIAG_WORDS]
 
 int main(void)
 {
+  /* HW option-byte IWDG can run before Watchdog_Init; survive long init. */
+  IWDG->KR = 0xAAAAU;
   ResetDiag_Boot();
   HAL_Init();
   SystemClock_Config();
@@ -45,6 +47,19 @@ int main(void)
   UartLog_Init();
   Watchdog_Init();
   (void)motor_swd_entry[0];
+
+  /* Charge pump must rise without any host/mot command. Warm the poll loop
+   * before while(1) so duty starts stepping immediately after init. */
+  {
+    uint32_t t0 = HAL_GetTick();
+
+    while ((HAL_GetTick() - t0) < 200U)
+    {
+      MotorPwm_PollOcpZero();
+      Boost_Poll();
+      Watchdog_Kick();
+    }
+  }
 
 #if defined(MOTOR_START_BENCH) && (MOTOR_START_BENCH != 0)
   /* Pure CPU measurement with the motor off. Reached by reset rather than by a

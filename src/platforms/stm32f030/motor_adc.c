@@ -52,6 +52,21 @@ void MotorAdc_NotifyVboostSample(uint16_t raw)
   s_vboost_raw = raw;
 }
 
+int MotorAdc_BootstrapVboost(void)
+{
+  uint16_t v;
+
+  if (s_ready == 0U)
+  {
+    return 0;
+  }
+  (void)HAL_ADC_Stop_DMA(&s_hadc);
+  v = adc_sw_one(&s_hadc, BOARD_ADC_VBOOST_CH);
+  (void)MotorAdc_Start();
+  MotorAdc_NotifyVboostSample(v);
+  return (v >= 800U) ? 1 : 0;
+}
+
 uint16_t MotorAdc_VbusRailMv(void)
 {
   return s_v12_mv;
@@ -226,6 +241,7 @@ void MotorAdc_DmaIrq(void)
     uint32_t cyc;
 
     DMA1->IFCR = DMA_IFCR_CTCIF1;
+    MotorAdc_NotifyVboostSample(g_motor_adc_raw[MOTOR_ADC_VBOOST]);
 #if defined(MOTOR_ADC_STROBE) && (MOTOR_ADC_STROBE != 0)
     /* Pulse first: it marks sample end, and the edges must not sit in the
      * next sequence (measurement-validity 3.9). */

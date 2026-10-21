@@ -23,7 +23,7 @@
 #define BOOST_OV_CODE     2351U   /* 36.0 V, under the 40 V diode */
 #define BOOST_LO_CODE     2040U   /* ~31.2 V: may step duty up */
 #define BOOST_HI_CODE     2140U   /* ~32.8 V: may step duty down */
-#define BOOST_READY_LO    2000U   /* ~30.6 V: Boost_Ready / MOE */
+#define BOOST_READY_LO    2000U   /* ~30.6 V: Boost_Ready window low */
 /* >2×20 ms @ 50 Hz mains; prime vs 20/10 ms cadences. Not for amplitude. */
 #define BOOST_STEP_MIN_MS 43U
 #define BOOST_BAND        2U      /* Boost_Step / bringup only */
@@ -37,7 +37,7 @@
 
 void Boost_Init(void);
 void Boost_Poll(void);
-/* 1 after PA5 has reached the 32 V window. Stays 1 through a small dip. */
+/* 1 while filtered PA5 is in BOOST_READY_LO..BOOST_OV_CODE; 0 otherwise. */
 uint8_t Boost_Ready(void);
 /* HardwareSafe drops every TIM1 channel. Put CH4 and MOE back. */
 void Boost_KeepAlive(void);

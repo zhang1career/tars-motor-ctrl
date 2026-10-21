@@ -84,6 +84,8 @@ uint16_t MotorAdc_NtcRaw(void);
 uint16_t MotorAdc_VboostRaw(void);
 /* Boot rail sample before MotorAdc DMA is up (TnbNode_SampleRails). */
 void MotorAdc_NotifyVboostSample(uint16_t raw);
+/* One PA5 sample after MotorAdc_Start; restores PWM-synchronised DMA. */
+int  MotorAdc_BootstrapVboost(void);
 /* Last PA4 rail sample from PollRails (same 82k/10k scale as VbusMv). */
 uint16_t MotorAdc_VbusRailMv(void);
 
