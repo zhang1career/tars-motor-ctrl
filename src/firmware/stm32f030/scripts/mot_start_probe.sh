@@ -13,17 +13,19 @@ read_u32() { printf '%d' "0x$(read_words "$1" 1 | head -1)"; }
 
 probe() {
   local tag=$1
-  local gb sf pa bdtr flags adc mv duty ready
+  local gb pa bdtr adc mv duty ready
   gb=$(sym_addr g_boost)
-  sf=$(python3 "$BENCH_ROOT/scripts/sym_cache.py" "$ELF" s_flags)
   gbw=$(read_words "$gb" 3)
   w2=$(echo "$gbw" | sed -n '2p')
   w3=$(echo "$gbw" | sed -n '3p')
   adc=$(printf '%d' "0x$(echo "$w2" | cut -c5-8)")
   mv=$(printf '%d' "0x$(echo "$w3" | cut -c1-4)")
   duty=$(printf '%d' "0x$(echo "$w3" | cut -c5-8)")
-  flags=$(read_u16 "$sf" lo 2>/dev/null || echo 0)
-  ready=$((flags & 1))
+  # Match Boost_Ready(): filtered PA5 in 2000..2351 (~30.6 V .. OV).
+  ready=0
+  if [ "$adc" -ge 2000 ] && [ "$adc" -le 2351 ]; then
+    ready=1
+  fi
   pa=$(read_u32 "$GPIOA_IDR")
   nf=$(((pa & NFAULT_BIT) != 0 ? 1 : 0))
   bdtr=$(read_u32 "$TIM1_BDTR")

@@ -92,7 +92,6 @@ static volatile int16_t  s_iq_ma = 300;
 static volatile int16_t  s_w_eps = 80;
 static volatile uint8_t  s_state = TNB_MOT_ST_IDLE;
 static volatile uint16_t s_fault;
-static volatile uint8_t  s_run_req;
 static volatile uint8_t  s_stop_req;
 static volatile uint32_t s_t0;
 static uint32_t s_h6_edges;
@@ -429,7 +428,6 @@ static void do_stop(void)
   g_motor_foc_w_meas_eps = 0;
   MotorApp_Stop();
   s_state = TNB_MOT_ST_IDLE;
-  s_run_req = 0U;
   UartLog_Puts("停机");
   UartLog_Nl();
 }
@@ -489,7 +487,6 @@ void TnbMotor_Init(void)
 
 void TnbMotor_RequestRun(void)
 {
-  s_run_req = 0U;
   s_stop_req = 0U;
   if (SystemCoreClock < 40000000U)
   {
@@ -691,7 +688,6 @@ void TnbMotor_PollIsr(void)
 void TnbMotor_RequestStop(void)
 {
   s_stop_req = 1U;
-  s_run_req = 0U;
   s_rev = 0U;
   g_motor_foc_handover = 2U;
   g_motor_foc_w_meas_eps = 0;
@@ -927,18 +923,6 @@ void TnbMotor_Task(void)
     UartLog_Puts("故障 ");
     UartLog_PutHex16(s_fault);
     UartLog_Nl();
-    return;
-  }
-
-  if ((s_run_req != 0U) && (s_state == TNB_MOT_ST_IDLE))
-  {
-    /* Leave the request pending until the boost output is in the 32 V window. */
-    if (Boost_Ready() == 0U)
-    {
-      return;
-    }
-    s_run_req = 0U;
-    start_hall6(1U);
     return;
   }
 
