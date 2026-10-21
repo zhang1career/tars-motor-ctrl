@@ -310,6 +310,9 @@ void Boost_Poll(void)
   if ((TIM1->BDTR & TIM_BDTR_MOE) == 0U)
   {
     boost_force(0U);
+    s_filt = 0U;
+    g_boost.adc = 0U;
+    g_boost.mv = 0U;
     g_boost.duty = 0U;
     return;
   }
