@@ -1,6 +1,6 @@
 # benchgate 记录目录
 
-> 由 benchgate 自动生成，请勿手改。源数据：`models/index.jsonl`，共 281 条。生成于 2026-10-21 14:22。
+> 由 benchgate 自动生成，请勿手改。源数据：`models/index.jsonl`，共 286 条。生成于 2026-10-21 15:05。
 
 ## 当前状态
 
@@ -8,7 +8,7 @@
 
 | 类型 | 最近一次 | 结论 | 输入 | 摘要 | 记录 |
 |---|---|---|---|---|---|
-| 采集 | 2026-10-21 14:22 | 正常 | — | code, stopped, i24, hall 等 5 路 · 附件 1 | `20261021T062255Z_5a32` |
+| 采集 | 2026-10-21 15:05 | 正常 | — | 附件 1 | `20261021T070554Z_fec8` |
 
 ## 记录（最新在前，最多 300 条）
 
@@ -17,6 +17,11 @@
 
 | 时间 | 类型 | 结论 | 摘要 | 目的 | 记录 |
 |---|---|---|---|---|---|
+| 15:05 | 采集 | 正常 | 附件 1 | hook 自动补记：models/captured/motor-resume-20261020/b2-iq200-dqv-verify-3-20261021.csv | `20261021T070554Z_fec8` |
+| 15:05 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq200 verify-3 retry post-cleanup | `20261021T070502Z_dddc` |
+| 15:04 | 采集 | 正常 | code, stopped, i24 | B2 iq200 verify-3 post-a926276 | `20261021T070411Z_271b` |
+| 15:04 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq200 verify-2 post-a926276 | `20261021T070404Z_36df` |
+| 15:03 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | B2 iq200 verify-1 post-a926276 | `20261021T070354Z_134c` |
 | 14:22 | 采集 | 正常 | code, stopped, i24, hall 等 5 路 · 附件 1 | post-boost-sfilt-moe-regression | `20261021T062255Z_5a32` |
 | 14:22 | 采集 | 正常 | code, stopped, i24 | post-boost-sfilt-moe-regression | `20261021T062240Z_8129` |
 | 14:22 | 采集 | 正常 | code, stopped, i24 | post-boost-sfilt-moe-regression | `20261021T062222Z_1c45` |
